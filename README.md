@@ -10,6 +10,9 @@ the draft branch `feat/vfio-dma-bar` (omega-mv#890, commit `397e6704`, on #878 `
 It adds the `vfioctl` and `vfiomap` words plus IOMMU_MAP_DMA/UNMAP_DMA and the writable `vfiomapw` this
 driver needs. The pin moves to omega-mv main after those PRs are reviewed and merged.
 
+`DESIGN.md` (PROPOSED, no code yet) records the isolation model, the submit ABI and the ordering model:
+one GPU VA space per client with no pushbuffer parser, per-buffer read/write fences, and no BAR1.
+
 ## W0: bind, read identity, release
 
 `w0 BDF GROUP [HEXOFF]` opens one PCI function that the operator has already bound to `vfio-pci`, reads
