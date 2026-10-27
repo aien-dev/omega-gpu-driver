@@ -1,6 +1,7 @@
 note w0: bind-read-release identity probe for one vfio-pci device. Usage: w0 BDF GROUP [HEXOFF]
 note It never writes to the device: vfiomap is read-only and every other access is pread.
-note It never calls DEVICE_RESET; Linux vfio-pci resets the function on open where it can.
+note It never calls DEVICE_RESET (omc refuses it), but Linux vfio-pci resets the device itself:
+note FLR on open when a reset method is enabled, and pci_reset_bus (SBR) on release. See README.
 note Register offsets (open-gpu-kernel-modules 580.173.02, src/common/inc/swref/published/nv_ref.h):
 note NV_PMC_BOOT_0 0x0 :108, NV_PMC_BOOT_1 0x4 :138, NV_PMC_BOOT_42 0xA00 :149.
 note Config space NV_CONFIG_PCI_NV_0 vendor/device 0x0 :52, NV_CONFIG_PCI_NV_2 rev/class 0x8 :66,
