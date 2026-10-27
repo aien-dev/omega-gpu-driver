@@ -59,3 +59,9 @@ Main binds the GPU to `vfio-pci` (000f:01:00.0, IOMMU group 20, alone in its gro
 Expected: config vendor/device 0x2e1210de (lspci reports [10de:2e12]) and matching map and pread
 values. The BOOT_0 architecture field (bits 28:24) is defined at nv_ref.h:129-136 (GB100 0x1A, GB200
 0x1B); which value the GB10 reports is what this run measures, not something this repo asserts.
+
+## Licence
+
+Apache-2.0; see `LICENSE`. `NOTICE` credits the NVIDIA open-gpu-kernel-modules header
+(`nv_ref.h`, MIT) that the register offsets are cited from. Any part that becomes in-kernel Linux
+code would be `MIT OR GPL-2.0-only` instead.
