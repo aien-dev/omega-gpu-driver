@@ -1,0 +1,709 @@
+note gsp/sysinfo.om: the GspSystemInfo payload of GSP_SET_SYSTEM_INFO (RPC 72, 936 bytes) in seeded Omega.
+note Port of aien-dev/aienux PR #441 native/kernel/tools/ck_gsp_sysinfo_encode.c (encode, the fields
+note table, the slurped-text rules). The 72 field offsets and sizes are that tool's table, which its
+note nvhdr gate checks against NVIDIA's GspSystemInfo (open-gpu-kernel-modules 580.173.02,
+note src/nvidia/generated/g_rpc-structures.h via gsp_static_config.h). Little endian, every byte not set is 0.
+note Library unit: no main. Name prefix si / SI only.
+note
+note API (all state is in globals; a global can never be an argument):
+note   sireset            load the table, clear values, seen marks, set order and siout. Call first.
+note   siseti k v         set field k (0..71, the order below) to v; long code
+note   sisetn v           set the field named sinam[0..sinl) to v; long code
+note   sitext n           parse sitxt[0..n) as the C tool's "field value" lines; long code; the set
+note                      order (siord[0..sinord)) lets a caller echo each accepted line
+note   siencode           build siout[0..936) from every accepted field
+note   sinmk k            copy field k's name into sinam/sinl
+note   siwhy e            put the refusal text of code e into siwb[0..siwl) (the C tool's why string;
+note                      for siseti/sisetn refusals the "line N: " prefix is left out)
+note codes: 0 SIEOK; -1 SIEIDX index past 71 (API only); -2 SIEREP field repeated; -3 SIEFIT value
+note does not fit the field; -4 SIEUNK unknown field; -5 SIENUM not a number; -6 SIEWANT line is not
+note "field value"; -7 SIELONG line of 512 bytes or more; -8 SIEBIG text over 65536 bytes (.om only, the
+note C slurps any size); -9 SIENIT sireset not called (.om only).
+note A refused set leaves the field unset; a refused sitext ends at the refused line (lines before it
+note stay set, as the C tool's partial echo shows), and the caller must not send siout then.
+note
+note Field sources for ogd on GB10 (VFIO userspace; nvidia.ko fill sites in open-gpu-kernel-modules
+note 580.173.02; every NVIDIA path below is under src/nvidia/ unless it starts with kernel-open/). All
+note fields are written by rpcGspSetSystemInfo_v17_00, src/kernel/vgpu/rpc.c:10493-10658. Window-1
+note values (hex) and their DOCUMENTED/OBSERVED/INFERRED/ASSUMED tags are in aienux
+note evidence/own-gpu-driver/rung2/system_info.txt. Source classes:
+note   CFG   = the GPU's own PCI config space, read through the VFIO config region (index 7)
+note   RP    = the upstream root port's config space (outside the VFIO group: sysfs config, read-only)
+note   CONST = fixed for GB10B / this host build, documented in the NVIDIA source
+note   OS    = host kernel constant
+note   DRV   = ogd's own allocation
+note   LIVE  = only a live read on the running GPU gives it
+note field                             src    nvidia.ko fill site                            GB10 value
+note gpuPhysAddr                       CFG    rpc.c:10525 <- gpu_mgr.c:1967 <- osinit.c:738     0x24000000
+note                                          (nv->regs->cpu_address, BAR0 start, nv-pci.c:1500-1502);
+note                                          ogd: BAR0/BAR1 dwords 0x10/0x14 of the config region or the
+note                                          sysfs resource file. LIVE per boot (PCI assignment).
+note gpuPhysFbAddr                     CONST  rpc.c:10526 <- osinit.c:739 (nv->fb, no FB BAR)       0
+note gpuPhysInstAddr                   CFG    rpc.c:10527 <- gpu_mgr.c:1994 (BAR0 + 0x700000)      0x24700000
+note gpuPhysIoAddr                     CONST  rpc.c:10528                                           0
+note nvDomainBusDeviceFunc             CFG    rpc.c:10529 <- osinit.c:764, osinit.c:144-147,         0xf00000100
+note                                          g_gpu_nvoc.h:502-507; ogd: the BDF it opened (000f:01:00.0)
+note simAccessBufPhysAddr              CONST  rpc.c:10562-10569 (0 outside simulation)              0
+note notifyOpSharedSurfacePhysAddr     DRV    rpc.c:10571-10578, kernel_gsp.c:3489-3526; ogd's IOVA of its
+note                                          notify-op page (IOMMU_MAP_DMA). LIVE per boot.
+note pcieAtomicsOpMask                 RP     rpc.c:10579 <- kernel_bif_gh100.c:620-642 (root port      0x7
+note                                          DevCap2 AtomicOp completer bits). INFERRED, needs RP read.
+note consoleMemSize                    CONST  rpc.c:10583 (no console reservation on GB10, UNKNOWN)   0
+note maxUserVa                         OS     rpc.c:10584 <- os.c:720 <- os-interface.c:1128-1131    0x1000000000000
+note                                          (TASK_SIZE; 48-bit VA arm64 kernel)
+note pciConfigMirrorBase               CONST  rpc.c:10540 <- kernel_bif_gh100.c:593-604, bound to      0x92000
+note                                          GB10B at g_kernel_bif_nvoc.c:965-968
+note pciConfigMirrorSize               CONST  same                                                   0x1000
+note PCIDeviceID                       CFG    rpc.c:10533 <- kern_gpu_gb100.c:967 (config 0x00)        0x2e1210de
+note PCISubDeviceID                    CFG    rpc.c:10534 <- kern_gpu_gb100.c:959 (config 0x2c)        0x10de
+note PCIRevisionID                     CFG    rpc.c:10535 <- kern_gpu_gb100.c:950 (config 0x08)        0xa1
+note pcieAtomicsCplDeviceCapMask       CFG    rpc.c:10581 <- kernel_bif_gb10b.c:30-60 (GPU DevCap2)    0
+note oorArch                           CONST  rpc.c:10530 <- gpu_mgr.c:1539 (OOR_ARCH_AARCH64)        3
+note clPdbProperties                   RP     rpc.c:10590 clSyncWithGsp, chipset.c:765               0x1088020c1
+note                                          (properties set while probing the root port). INFERRED.
+note Chipset                           RP     chipset.c:812 (nvcst.h:300, 0x22d1 -> CS_NVIDIA_T254)   0x106d
+note bGpuBehindBridge                  RP     rpc.c:10600-10604                                      0
+note bFlrSupported                     CFG    rpc.c:10555 <- kbifCacheFlrSupport_GH100               1
+note                                          kernel_bif_gh100.c:1099 (config 0x64 DevCap bit 28)
+note b64bBar0Supported                 CFG    rpc.c:10556 <- kbifCache64bBar0Support_GH100           1
+note                                          kernel_bif_gh100.c:1131 (BAR0 type bits)
+note bMnocAvailable                    CONST  rpc.c:10549                                           0
+note chipsetL1ssEnable                 RP     rpc.c:10552 (root port L1 PM substates)                0
+note bUpstreamL0sUnsupported           RP     rpc.c:10600-10604                                      0
+note bUpstreamL1Unsupported            RP     rpc.c:10600-10604                                      0
+note bUpstreamL1PorSupported           RP     rpc.c:10600-10604                                      0
+note bUpstreamL1PorMobileOnly          RP     rpc.c:10600-10604                                      0
+note bSystemHasMux                     CONST  rpc.c:10597                                           0
+note upstreamAddressValid              RP     rpc.c:10605                                           1
+note FHBBusInfo.deviceID .. revisionID RP     chipset.c:813 (bus info chipset.c:335-338)            0x22d1, 0x10de
+note chipsetIDInfo.deviceID .. rev     RP     chipset.c:814                                         0x22d1, 0x10de
+note acpiMethodData.bValid             CONST  rpc.c:10596 <- acpi_common.c:1131                      1
+note acpiMethodData.dodMethodData.*    CONST  acpi_common.c:1134-1136 (_DOD absent: status 0xffff,  0xffff, 64
+note                                          acpiIdListLen = sizeof list)
+note acpiMethodData.jt/capsMethodData  CONST  acpi_common.c (status of absent methods)              0x56, 0x56
+note hypervisorType                    CONST  rpc.c:10607 <- hypervisor.c:51,58 (OS_HYPERVISOR_UNKNOWN) 4
+note virtualConfigBits, bIsPassthru    CONST  rpc.c:10608-10609                                      0
+note sysTimerOffsetNs                  LIVE   rpc.c:10622 <- timer_gb10b.c:52-77 (OS ns - PTIMER ns)  0 (UNKNOWN)
+note                                          needs a PTIMER read in the window, just before the send
+note gspVFInfo.*                       CFG    rpc.c:10612-10619 (no SR-IOV capability)               0
+note bIsPrimary                        CONST  rpc.c:10624 (UNKNOWN; console owner)                   0
+note bIsUnixHdmiFrlComplianceEnabled   CONST  rpc.c:10625 <- g_gpu_nvoc.c:350                       1
+note isGridBuild, gridBuildCsp         CONST  rpc.c:10629, :10631                                   0
+note pcieConfigReg.linkCap             CFG    rpc.c:10559 (config 0x6c, PCIe Link Capabilities)       0x457901
+note bPreserveVideoMemoryAllocations   CONST  rpc.c:10632                                           0
+note bTdrEventSupported                CONST  rpc.c:10635                                           0
+note bFeatureStretchVblankCapable      CONST  rpc.c:10640                                           0
+note bEnableDynamicGranularityPageArrays CONST rpc.c:10585                                          0
+note bClockBoostSupported              CONST  rpc.c:10647                                           0
+note hostPageSize                      OS     rpc.c:10593 <- os.c:4421 (os_page_size)                4096
+note bIsCmcBasedHws                    CONST  never assigned in 580.173.02 (stays 0)                 0
+note bGspNocatEnabled                  CONST  rpc.c:10649-10652 (Windows only)                       0
+note bS0ixSupport                      CONST  rpc.c:10627                                           0
+note bWindowChannelAlwaysMapped        CONST  rpc.c:10641 <- g_kern_disp_nvoc.c:305                  1
+note Values only a live read gives: gpuPhysAddr/gpuPhysInstAddr (BAR assignment), the CFG ids, linkCap,
+note FLR and BAR0-64-bit bits (config region), the RP fields (root-port config), sysTimerOffsetNs (PTIMER
+note at send time) and notifyOpSharedSurfacePhysAddr (ogd's own DMA mapping). Nothing here reads them:
+note the caller supplies every value. Nothing here has run on the chip.
+const SINF ulong 72
+const SISIZE ulong 936
+note a line of 512 bytes or more is refused (the C tool's char buf[512])
+const SILINE ulong 512
+note the text buffer: 65536 bytes (the C tool slurps any size; .om refuses more, SIEBIG)
+const SITXMAX ulong 65536
+const SIMAX64 ulong 18446744073709551615
+const SIEOK long 0
+const SIEIDX long -1
+const SIEREP long -2
+const SIEFIT long -3
+const SIEUNK long -4
+const SIENUM long -5
+const SIEWANT long -6
+const SIELONG long -7
+const SIEBIG long -8
+const SIENIT long -9
+note the 72 field names in table order, each followed by one space
+text sinames "gpuPhysAddr gpuPhysFbAddr gpuPhysInstAddr gpuPhysIoAddr nvDomainBusDeviceFunc simAccessBufPhysAddr notifyOpSharedSurfacePhysAddr pcieAtomicsOpMask consoleMemSize maxUserVa pciConfigMirrorBase pciConfigMirrorSize PCIDeviceID PCISubDeviceID PCIRevisionID pcieAtomicsCplDeviceCapMask oorArch clPdbProperties Chipset bGpuBehindBridge bFlrSupported b64bBar0Supported bMnocAvailable chipsetL1ssEnable bUpstreamL0sUnsupported bUpstreamL1Unsupported bUpstreamL1PorSupported bUpstreamL1PorMobileOnly bSystemHasMux upstreamAddressValid FHBBusInfo.deviceID FHBBusInfo.vendorID FHBBusInfo.subdeviceID FHBBusInfo.subvendorID FHBBusInfo.revisionID chipsetIDInfo.deviceID chipsetIDInfo.vendorID chipsetIDInfo.subdeviceID chipsetIDInfo.subvendorID chipsetIDInfo.revisionID acpiMethodData.bValid acpiMethodData.dodMethodData.status acpiMethodData.dodMethodData.acpiIdListLen acpiMethodData.jtMethodData.status acpiMethodData.capsMethodData.status hypervisorType virtualConfigBits bIsPassthru sysTimerOffsetNs gspVFInfo.totalVFs gspVFInfo.firstVFOffset gspVFInfo.FirstVFBar0Address gspVFInfo.FirstVFBar1Address gspVFInfo.FirstVFBar2Address gspVFInfo.b64bitBar0 gspVFInfo.b64bitBar1 gspVFInfo.b64bitBar2 bIsPrimary bIsUnixHdmiFrlComplianceEnabled isGridBuild pcieConfigReg.linkCap gridBuildCsp bPreserveVideoMemoryAllocations bTdrEventSupported bFeatureStretchVblankCapable bEnableDynamicGranularityPageArrays bClockBoostSupported hostPageSize bIsCmcBasedHws bGspNocatEnabled bS0ixSupport bWindowChannelAlwaysMapped "
+note refusal fragments, each ended by | (124): 0 "line " 1 " too long" 2 ": " 3 want 4 unknown field
+note 5 "field " 6 " repeated" 7 " is not a number" 8 " does not fit " 9 " (" 10 " bytes)" 11 index
+note 12 too big 13 not reset
+text siwt "line | too long|: |want \"field value\"|unknown field |field | repeated| is not a number| does not fit | (| bytes)|field index out of range|text over 65536 bytes|sireset not called|"
+global sioff ulong 72
+global sisz ulong 72
+global sival ulong 72
+global siseen uchar 72
+global siord ulong 72
+global sinord ulong 1
+global siout uchar 936
+global sitxt uchar 65536
+note name and value tokens of the current line (or of the last siseti/sisetn call)
+global sinam uchar 128
+global sinl ulong 1
+global sivb uchar 128
+global sivl ulong 1
+note line number of the last refusal (0 = an API call), field index of the current line, parser cursor
+global siline ulong 1
+global sifld ulong 1
+global sipos ulong 1
+global sinv ulong 1
+global siwb uchar 256
+global siwl ulong 1
+fn sireset to void
+put sioff 0 0
+put sisz 0 8
+put sioff 1 8
+put sisz 1 8
+put sioff 2 16
+put sisz 2 8
+put sioff 3 24
+put sisz 3 8
+put sioff 4 32
+put sisz 4 8
+put sioff 5 40
+put sisz 5 8
+put sioff 6 48
+put sisz 6 8
+put sioff 7 56
+put sisz 7 8
+put sioff 8 64
+put sisz 8 8
+put sioff 9 72
+put sisz 9 8
+put sioff 10 80
+put sisz 10 4
+put sioff 11 84
+put sisz 11 4
+put sioff 12 88
+put sisz 12 4
+put sioff 13 92
+put sisz 13 4
+put sioff 14 96
+put sisz 14 4
+put sioff 15 100
+put sisz 15 4
+put sioff 16 104
+put sisz 16 1
+put sioff 17 112
+put sisz 17 8
+put sioff 18 120
+put sisz 18 4
+put sioff 19 124
+put sisz 19 1
+put sioff 20 125
+put sisz 20 1
+put sioff 21 126
+put sisz 21 1
+put sioff 22 127
+put sisz 22 1
+put sioff 23 128
+put sisz 23 4
+put sioff 24 132
+put sisz 24 1
+put sioff 25 133
+put sisz 25 1
+put sioff 26 134
+put sisz 26 1
+put sioff 27 135
+put sisz 27 1
+put sioff 28 136
+put sisz 28 1
+put sioff 29 137
+put sisz 29 1
+put sioff 30 138
+put sisz 30 2
+put sioff 31 140
+put sisz 31 2
+put sioff 32 142
+put sisz 32 2
+put sioff 33 144
+put sisz 33 2
+put sioff 34 146
+put sisz 34 1
+put sioff 35 148
+put sisz 35 2
+put sioff 36 150
+put sisz 36 2
+put sioff 37 152
+put sisz 37 2
+put sioff 38 154
+put sisz 38 2
+put sioff 39 156
+put sisz 39 1
+put sioff 40 160
+put sisz 40 1
+put sioff 41 164
+put sisz 41 4
+put sioff 42 168
+put sisz 42 4
+put sioff 43 236
+put sisz 43 4
+put sioff 44 828
+put sisz 44 4
+put sioff 45 836
+put sisz 45 4
+put sioff 46 840
+put sisz 46 2
+put sioff 47 842
+put sisz 47 1
+put sioff 48 848
+put sisz 48 8
+put sioff 49 856
+put sisz 49 4
+put sioff 50 860
+put sisz 50 4
+put sioff 51 864
+put sisz 51 8
+put sioff 52 872
+put sisz 52 8
+put sioff 53 880
+put sisz 53 8
+put sioff 54 888
+put sisz 54 1
+put sioff 55 889
+put sisz 55 1
+put sioff 56 890
+put sisz 56 1
+put sioff 57 896
+put sisz 57 1
+put sioff 58 897
+put sisz 58 1
+put sioff 59 898
+put sisz 59 1
+put sioff 60 900
+put sisz 60 4
+put sioff 61 904
+put sisz 61 4
+put sioff 62 908
+put sisz 62 1
+put sioff 63 909
+put sisz 63 1
+put sioff 64 910
+put sisz 64 1
+put sioff 65 911
+put sisz 65 1
+put sioff 66 912
+put sisz 66 1
+put sioff 67 920
+put sisz 67 8
+put sioff 68 928
+put sisz 68 1
+put sioff 69 929
+put sisz 69 1
+put sioff 70 930
+put sisz 70 1
+put sioff 71 931
+put sisz 71 1
+for k ulong SINF
+put sival k 0
+put siseen k 0
+put siord k 0
+end
+for i ulong SISIZE
+put siout i 0
+end
+put sinord 0 0
+put siline 0 0
+put sinl 0 0
+put sivl 0 0
+put siwl 0 0
+end
+note the field's value fits its size (8-byte fields take any value)
+fn sifits k ulong v ulong to bool
+sz = get sisz k
+if lt sz 8
+ret eq shr v mul sz 8 0
+end
+ret true
+end
+fn sistore k ulong v ulong to long
+if ge k SINF
+ret SIEIDX
+end
+if ne get siseen k 0
+ret SIEREP
+end
+if not sifits k v
+ret SIEFIT
+end
+put siseen k 1
+put sival k v
+n = get sinord 0
+put siord n k
+put sinord 0 add n 1
+ret SIEOK
+end
+note name k into sinam/sinl
+fn sinmk k ulong to void
+w = ulong 0
+o = ulong 0
+for i ulong len sinames
+c = get sinames i
+if eq c 32
+w = add w 1
+else
+if eq w k
+put sinam o c
+o = add o 1
+end
+end
+end
+put sinl 0 o
+end
+fn sieqat s ulong n ulong to bool
+for j ulong n
+if ne get sinames add s j get sinam j
+ret false
+end
+end
+ret true
+end
+note index of the field named sinam[0..sinl), SINF when none
+fn silook to ulong
+k = ulong 0
+s = ulong 0
+n = get sinl 0
+for i ulong len sinames
+if eq get sinames i 32
+if eq sub i s n
+if sieqat s n
+ret k
+end
+end
+k = add k 1
+s = add i 1
+end
+end
+ret SINF
+end
+note sivb[0..sivl) as "%#llx" of v (API path only)
+fn sihexv v ulong to void
+put sivb 0 48
+if eq v 0
+put sivl 0 1
+ret
+end
+put sivb 1 120
+nd = ulong 0
+t = v
+while ne t 0 bound 17
+nd = add nd 1
+t = shr t 4
+end
+for i ulong nd
+d = and shr v mul sub sub nd i 1 4 15
+if lt d 10
+put sivb add i 2 uchar add d 48
+else
+put sivb add i 2 uchar add d 87
+end
+end
+put sivl 0 add nd 2
+end
+fn siseti k ulong v ulong to long
+put siline 0 0
+if eq get sisz 0 0
+ret SIENIT
+end
+if lt k SINF
+sinmk k
+put sifld 0 k
+end
+sihexv v
+r = sistore k v
+ret r
+end
+fn sisetn v ulong to long
+put siline 0 0
+if eq get sisz 0 0
+ret SIENIT
+end
+k = silook
+if eq k SINF
+sihexv v
+ret SIEUNK
+end
+r = siseti k v
+ret r
+end
+fn siencode to void
+for i ulong SISIZE
+put siout i 0
+end
+for k ulong SINF
+if ne get siseen k 0
+v = get sival k
+o = get sioff k
+for b ulong get sisz k
+put siout add o b uchar and shr v mul b 8 255
+end
+end
+end
+end
+note C isspace: \t \n \v \f \r (9..13) and space (32)
+fn siws c uchar to bool
+ret or eq c 32 and ge c 9 le c 13
+end
+fn siskip b ulong to void
+p = get sipos 0
+while lt p b bound 600
+if not siws get sitxt p
+break
+end
+p = add p 1
+end
+put sipos 0 p
+end
+note one sscanf %127s token from sipos (which 0 = sinam, 1 = sivb, 2 = dropped); returns its length
+fn sitk which ulong b ulong to ulong
+p = get sipos 0
+n = ulong 0
+while and lt p b lt n 127 bound 600
+c = get sitxt p
+if siws c
+break
+end
+if eq which 0
+put sinam n c
+end
+if eq which 1
+put sivb n c
+end
+n = add n 1
+p = add p 1
+end
+put sipos 0 p
+ret n
+end
+note strtoull digit value, 99 for a non-digit
+fn sidig c uchar to ulong
+if and ge c 48 le c 57
+ret sub ulong c 48
+end
+if and ge c 97 le c 102
+ret sub ulong c 87
+end
+if and ge c 65 le c 70
+ret sub ulong c 55
+end
+ret 99
+end
+note sivb[0..sivl) as strtoull(val, &end, 0) with errno == 0, *end == 0 and val[0] != '-' -> sinv
+fn sinum to bool
+n = get sivl 0
+if eq get sivb 0 45
+ret false
+end
+i = ulong 0
+if eq get sivb 0 43
+i = 1
+end
+base = ulong 10
+if lt i n
+if eq get sivb i 48
+base = 8
+if lt add i 2 n
+x = get sivb add i 1
+if or eq x 120 eq x 88
+if lt sidig get sivb add i 2 16
+base = 16
+i = add i 2
+end
+end
+end
+end
+end
+v = ulong 0
+nd = ulong 0
+ovf = false
+while lt i n bound 200
+d = sidig get sivb i
+if ge d base
+break
+end
+if gt v div sub SIMAX64 d base
+ovf = true
+else
+v = add mul v base d
+end
+nd = add nd 1
+i = add i 1
+end
+put sinv 0 v
+ret and and gt nd 0 eq i n not ovf
+end
+note one line sitxt[a..b) after the # cut: 1 blank, else a code
+fn sidoln a ulong b ulong to long
+put sipos 0 a
+siskip b
+if eq get sipos 0 b
+ret 1
+end
+put sinl 0 sitk 0 b
+siskip b
+if eq get sipos 0 b
+ret SIEWANT
+end
+put sivl 0 sitk 1 b
+siskip b
+if ne get sipos 0 b
+ret SIEWANT
+end
+k = silook
+put sifld 0 k
+if eq k SINF
+ret SIEUNK
+end
+if ne get siseen k 0
+ret SIEREP
+end
+if not sinum
+ret SIENUM
+end
+r = sistore k get sinv 0
+ret r
+end
+fn sieol p ulong m ulong to ulong
+e = p
+while lt e m bound 70000
+if eq get sitxt e 10
+break
+end
+e = add e 1
+end
+ret e
+end
+fn sihash p ulong e ulong to ulong
+h = p
+while lt h e bound 600
+if eq get sitxt h 35
+break
+end
+h = add h 1
+end
+ret h
+end
+fn sitext n ulong to long
+put siline 0 0
+if eq get sisz 0 0
+ret SIENIT
+end
+if gt n SITXMAX
+ret SIEBIG
+end
+note the C tool reads a NUL-terminated string: the text ends at the first NUL byte
+m = n
+for i ulong n
+if eq get sitxt i 0
+m = i
+break
+end
+end
+p = ulong 0
+ln = ulong 0
+while lt p m bound 70000
+ln = add ln 1
+put siline 0 ln
+e = sieol p m
+if ge sub e p SILINE
+ret SIELONG
+end
+r = sidoln p sihash p e
+if lt r 0
+ret r
+end
+p = add e 1
+end
+put siline 0 0
+ret SIEOK
+end
+fn siwc c uchar to void
+n = get siwl 0
+if lt n 256
+put siwb n c
+put siwl 0 add n 1
+end
+end
+note fragment k of siwt
+fn siwfr k ulong to void
+w = ulong 0
+for i ulong len siwt
+c = get siwt i
+if eq c 124
+w = add w 1
+else
+if eq w k
+siwc c
+end
+end
+end
+end
+fn siwdec v ulong to void
+d = ulong 1
+while le d div v 10 bound 20
+d = mul d 10
+end
+while ne d 0 bound 20
+siwc uchar add rem div v d 10 48
+d = div d 10
+end
+end
+fn siwnam mx ulong to void
+for i ulong get sinl 0
+if lt i mx
+siwc get sinam i
+end
+end
+end
+fn siwval mx ulong to void
+for i ulong get sivl 0
+if lt i mx
+siwc get sivb i
+end
+end
+end
+note the refusal text of e (the C tool's why string) into siwb[0..siwl)
+fn siwhy e long to void
+put siwl 0 0
+ln = get siline 0
+if ne ln 0
+siwfr 0
+siwdec ln
+if eq e SIELONG
+siwfr 1
+ret
+end
+siwfr 2
+end
+if eq e SIEWANT
+siwfr 3
+end
+if eq e SIEUNK
+siwfr 4
+siwnam 128
+end
+if eq e SIEREP
+siwfr 5
+siwnam 128
+siwfr 6
+end
+if eq e SIENUM
+siwval 128
+siwfr 7
+end
+if eq e SIEFIT
+siwval 40
+siwfr 8
+siwnam 60
+siwfr 9
+siwdec get sisz get sifld 0
+siwfr 10
+end
+if eq e SIEIDX
+siwfr 11
+end
+if eq e SIEBIG
+siwfr 12
+end
+if eq e SIENIT
+siwfr 13
+end
+end

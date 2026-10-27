@@ -1,0 +1,292 @@
+note chan/chan.om: GPFIFO compute channel (ring, USERD, instance block, doorbell), ported from aienux
+note PR #441 native/kernel/gpu/gpu_chan.c and gpu_chan.h (branch pr441 @ c5bb3a4b). Library unit: no main.
+note Prefix ch / CH. Needs chan/gmmu.om and chan/mem.om before it, and chan/sim.om (mode 0 ops).
+note
+note A channel is a slot 0..3 (CHSLOTS); its buffers are chan/mem.om slots. The CPU writes the ring,
+note USERD GPPut and the instance block through mmwin; the doorbell goes through mmregwr.
+note
+note Channel ops (C: a function-pointer table): chbindop / chdisop / chidlop. mmmode 0 calls the
+note simulator (chan/sim.om gsbind / gsdisable / gsidle). On GB10 the channel is allocated, scheduled
+note and torn down by GSP-RM (RM_ALLOC BLACKWELL_CHANNEL_GPFIFO_A, encoded by chan/params.om), not by
+note register writes, so any other mode traps 9 here: the hardware ops are the GSP RPC path.
+note
+note API (state in globals; a global is never an argument):
+note   chinit -> void                         all slots closed and empty
+note   chcreate c chid rl ent -> long         ck_gpu_chan_create (chid, rl, ent uint)
+note   chsubmit c pb off n -> long            ck_gpu_chan_submit (pb a mem slot, off and n uint)
+note   chretire c upto -> void                ck_gpu_chan_retire (upto uint)
+note   chteardown c budget nx -> long         ck_gpu_chan_teardown; extras: the first nx slots of chx
+note                                          (GMNONE entries are skipped, as C null pointers)
+note   chtoken rl chid -> uint                ck_gpu_submit_token
+note   chrluserd pa -> long                   ck_gpu_rl_userd, the two words in chrlo
+note   chgpent va n -> ulong                  ck_gpu_gp_entry; chmthd: ck_gpu_mthd
+note   per slot: chchid chrl chtok chent chpdb chgpva chupa chipa chrl0 chrl1 (descriptor), chgp chud
+note   chin (ring, USERD, instance mem slots), chput chret (uint, wrap as uint32), chopen
+note codes (enum ck_gpu_chan_status): 0 CHOK, 1 CHEINVAL, 2 CHENOMEM, 3 CHESTATE, 4 CHEFULL, 5 CHEBIND,
+note 6 CHETIME
+const CHOK long 0
+const CHEINVAL long 1
+const CHENOMEM long 2
+const CHESTATE long 3
+const CHEFULL long 4
+const CHEBIND long 5
+const CHETIME long 6
+const CHSLOTS ulong 4
+note CHID_MAX 0xFFF, RUNLIST_INVALID 0x7F, GP length max 0x1FFFFF, GP VA limit 1<<40
+const CHIDMAX uint 4095
+const CHRLINV uint 127
+const CHLENMX uint 2097151
+const CHVALIM ulong 1099511627776
+note USERD 512 bytes, GPPut at 0x8C; instance block 4096 bytes, page directory at word 128 (byte 512)
+const CHUDSZ ulong 512
+const CHGPPUT ulong 140
+const CHINSZ ulong 4096
+const CHPDBW ulong 512
+note RAMIN PDB: target sysmem coherent 2, BIG_PAGE_SIZE_64K bit 11 (2048); low address mask 0xFFFFF000
+const CHTSYS uint 2
+const CHBIG64 uint 2048
+const CHLOM uint 4294963200
+note doorbell VF base 0xB80000 + 0x30090 = 0xBB0090
+const CHDBELL ulong 12255376
+note GP entry: va & ~3 (mask 2^64-4), LENGTH at bit 42, LEVEL bit 41 set as physics nvrm_gp_entry does
+const CHVAM ulong 18446744073709551612
+const CHGPB41 ulong 2199023255552
+note method header (nvrm_mthd, INC_METHOD): 2 << 28
+const CHNINC uint 536870912
+global chchid uint 4
+global chrl uint 4
+global chtok uint 4
+global chent uint 4
+global chpdb ulong 4
+global chgpva ulong 4
+global chupa ulong 4
+global chipa ulong 4
+global chrl0 uint 4
+global chrl1 uint 4
+global chgp ulong 4
+global chud ulong 4
+global chin ulong 4
+global chput uint 4
+global chret uint 4
+global chopen uchar 4
+global chrlo uint 2
+global chx ulong 8
+fn chtoken rl uint chid uint to uint
+ret or shl and rl CHRLINV 16 and chid CHIDMAX
+end
+fn chrluserd pa ulong to long
+if or ne and pa 255 0 ge pa MMPALIM
+ret CHEINVAL
+end
+put chrlo 0 and uint and pa 4294967295 4294967040
+put chrlo 1 and uint and shr pa 32 4294967295 1048575
+ret CHOK
+end
+fn chgpent va ulong n uint to ulong
+ret or or and va CHVAM shl and ulong n 2097151 42 CHGPB41
+end
+fn chmthd subc uint mthd uint count uint to uint
+ret or or or CHNINC shl count 16 shl subc 13 shr mthd 2
+end
+fn chbindop c ulong to long
+if ne get mmmode 0 0
+trap 9
+end
+ret gsbind get chchid c get chtok c get chent c get chgpva c get chupa c get chipa c
+end
+fn chdisop chid uint to long
+if ne get mmmode 0 0
+trap 9
+end
+ret gsdisable chid
+end
+fn chidlop chid uint to long
+if ne get mmmode 0 0
+trap 9
+end
+ret gsidle chid
+end
+fn chinit to void
+for c ulong CHSLOTS
+put chopen c 0
+put chgp c GMNONE
+put chud c GMNONE
+put chin c GMNONE
+put chput c 0
+put chret c 0
+end
+end
+note create's error path: free whichever of the three buffers exist, ENOMEM
+fn chnomem c ulong to long
+if ne get chin c GMNONE
+r = gmfree get chin c
+end
+if ne get chud c GMNONE
+r = gmfree get chud c
+end
+if ne get chgp c GMNONE
+r = gmfree get chgp c
+end
+put chgp c GMNONE
+put chud c GMNONE
+put chin c GMNONE
+ret CHENOMEM
+end
+fn chcreate c ulong chid uint rl uint ent uint to long
+if ge c CHSLOTS
+ret CHEINVAL
+end
+if or gt chid CHIDMAX ge rl CHRLINV
+ret CHEINVAL
+end
+if or or lt ent 2 gt ent 65536 ne and ent sub ent 1 0
+ret CHEINVAL
+end
+put chopen c 0
+put chput c 0
+put chret c 0
+put chgp c GMNONE
+put chud c GMNONE
+put chin c GMNONE
+if ne gmalloc mul ulong ent 8 1 GMGPURO GMOK
+ret chnomem c
+end
+put chgp c get gmout 0
+if ne gmalloc CHUDSZ 1 GMHPOLL GMOK
+ret chnomem c
+end
+put chud c get gmout 0
+if ne gmalloc CHINSZ 1 0 GMOK
+ret chnomem c
+end
+put chin c get gmout 0
+ret chfill c chid rl ent
+end
+note zero gpfifo, USERD and instance block; write the RAMIN page-directory words
+fn chzero c ulong to ulong
+g = get chgp c
+u = get chud c
+n = get chin c
+mmzero get gmbpa g get gmbsz g
+mmzero get gmbpa u get gmbsz u
+mmzero get gmbpa n get gmbsz n
+pdb = get mmroot 0
+ip = get gmbpa n
+mmwr32 add ip CHPDBW ulong or or and uint and pdb 4294967295 CHLOM CHBIG64 CHTSYS
+mmwr32 add ip add CHPDBW 4 shr pdb 32
+ret pdb
+end
+note fill the descriptor, the runlist entry, then bind through the channel ops
+fn chfill c ulong chid uint rl uint ent uint to long
+pdb = chzero c
+put chchid c chid
+put chrl c rl
+put chtok c chtoken rl chid
+put chent c ent
+put chpdb c pdb
+put chgpva c get gmbva get chgp c
+put chupa c get gmbpa get chud c
+put chipa c get gmbpa get chin c
+if ne chrluserd get gmbpa get chud c CHOK
+ret chnomem c
+end
+put chrl0 c get chrlo 0
+put chrl1 c get chrlo 1
+if ne chbindop c 0
+r = gmfree get chin c
+r = gmfree get chud c
+r = gmfree get chgp c
+ret CHEBIND
+end
+put chopen c 1
+ret CHOK
+end
+fn chsubmit c ulong pb ulong off uint n uint to long
+if or ge c CHSLOTS eq get chopen c 0
+ret CHESTATE
+end
+if not gmlive pb
+ret CHEINVAL
+end
+if or or ne and off 3 0 eq n 0 gt n CHLENMX
+ret CHEINVAL
+end
+span = mul ulong n 4
+sz = get gmbsz pb
+if or gt ulong off sz gt span sub sz ulong off
+ret CHEINVAL
+end
+va = add get gmbva pb ulong off
+if or ge va CHVALIM gt span sub CHVALIM va
+ret CHEINVAL
+end
+ret chpush c va n
+end
+note ring full check, GP entry at put % entries, GPPut in USERD, doorbell
+fn chpush c ulong va ulong n uint to long
+p = get chput c
+e = get chent c
+if ge sub p get chret c sub e 1
+ret CHEFULL
+end
+mmwr64 add get gmbpa get chgp c mul ulong rem p e 8 chgpent va n
+p = add p 1
+put chput c p
+mmwr32 add get gmbpa get chud c CHGPPUT ulong rem p e
+mmregwr CHDBELL ulong get chtok c
+ret CHOK
+end
+fn chretire c ulong upto uint to void
+if ge c CHSLOTS
+ret
+end
+r = get chret c
+if le sub upto r sub get chput c r
+put chret c upto
+end
+end
+fn chteardown c ulong budget uint nx ulong to long
+if or ge c CHSLOTS eq get chopen c 0
+ret CHESTATE
+end
+put chopen c 0
+chid = get chchid c
+d = chdisop chid
+idle = false
+for i uint budget
+if ne chidlop chid 0
+idle = true
+break
+end
+end
+rc = CHOK
+for k ulong 3
+b = get chin c
+if eq k 1
+b = get chud c
+end
+if eq k 2
+b = get chgp c
+end
+if not idle
+r = gmquar b
+else
+if ne gmfree b GMOK
+rc = CHETIME
+end
+end
+end
+if not idle
+for i ulong nx
+b = get chx i
+if gmlive b
+r = gmquar b
+end
+end
+rc = CHETIME
+end
+put chgp c GMNONE
+put chud c GMNONE
+put chin c GMNONE
+ret rc
+end

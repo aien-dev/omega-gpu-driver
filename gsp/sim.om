@@ -1,0 +1,325 @@
+note gsp/sim.om: a simulated GB10B SEC2 + GSP falcon for host tests of gsp/mmio.om. NOT the chip.
+note Port of aien-dev/aienux PR #441 native/kernel/gpu/gsp_sim.{h,c}. Models only what the driver source
+note says the host sees on BAR0 during GSP start-up: SEC2 EMEM channel 0 (1 KiB, EMEMC/EMEMD with write
+note auto-increment), its queue HEAD/TAIL and MAILBOX0/1, and the GSP falcon's MAILBOX0/1, HWCFG2
+note (target-mask pattern, lockdown bit 13), FALCON_OS, RISC-V CPUCTL and QUEUE_HEAD(0). Time is counted
+note in reads of the polled register. Every access is logged in order (first 1024 kept, all counted);
+note accesses the driver never makes, and orders it never uses, are violations. SIM-CHOICE marks what
+note the source does not settle. The offsets are this file's own copies (not the driver's), so a wrong
+note driver constant shows up as a wrong access instead of moving the simulator with it.
+note Library unit: no main. simrd / simwr are the mode 0 device of gsprd / gspwr.
+const XS2MB0 ulong 8650816
+const XS2MB1 ulong 8650820
+const XS2EMC ulong 8653504
+const XS2EMD ulong 8653508
+const XS2QH ulong 8653824
+const XS2QT ulong 8653828
+const XGMB0 ulong 1114176
+const XGMB1 ulong 1114180
+const XGOS ulong 1114240
+const XGHWCF2 ulong 1114356
+const XGQH ulong 1117184
+const XGCPUCT ulong 1119112
+note AINCW 1<<24, busy 0xc001cafe, lockdown 1<<13, active 1<<7, a wait that never ends 0xFFFFFFFF
+const XAINCW ulong 16777216
+const XBUSY ulong 3221342974
+const XLOCK ulong 8192
+const XACT ulong 128
+const XM32 ulong 4294967295
+const NOEND ulong 4294967295
+const LOGMAX ulong 1024
+note config (struct ck_gspsim_cfg), set by the caller before siminit: scfg
+note 0 busy_reads, 1 cmd_reads, 2 mask_reads, 3 args_reads, 4 lockdown_reads, 5 fmc_error, 6 riscv_dead,
+note 7 emem_no_inc, 8 fmc_args_pa, 9 hwcfg2_zero_reads
+global scfg ulong 10
+global semem ulong 256
+note runtime PM state of the simulated device, set by the caller: 0 active, 1 suspended (D3).
+note siminit leaves it alone. Any access while suspended counts as a violation.
+global spm ulong 1
+fn simpmok to bool
+ret eq get spm 0 0
+end
+note state words: ss[i]
+const SEMEMC ulong 0
+const SQHEAD ulong 1
+const SQTAIL ulong 2
+const SS2MB0 ulong 3
+const SS2MB1 ulong 4
+const SGMB0 ulong 5
+const SGMB1 ulong 6
+const SHWCFG2 ulong 7
+const SOS ulong 8
+const SCPUCTL ulong 9
+const SGQHW ulong 10
+note phase: 0 idle, 1 command posted, 2 handled (mask), 3 FMC running (lockdown), 4 released, 9 rejected
+const SPHASE ulong 11
+const SLEFT ulong 12
+const SZLEFT ulong 13
+const SPKTOK ulong 14
+const SOSPH ulong 15
+const SNLOG ulong 16
+const SVIOL ulong 17
+global ss ulong 18
+global slogo ulong 1024
+global slogv ulong 1024
+global slogw uchar 1024
+fn sg i ulong to ulong
+ret get ss i
+end
+fn sp i ulong v ulong to void
+put ss i v
+end
+fn sviol to void
+sp SVIOL add sg SVIOL 1
+end
+note a countdown word: 0 stays (the caller acts on 0), NOEND stays, anything else drops by one
+fn sdec i ulong to void
+l = sg i
+if and ne l 0 ne l NOEND
+sp i sub l 1
+end
+end
+fn slog off ulong v ulong w uchar to void
+n = sg SNLOG
+if lt n LOGMAX
+put slogo n off
+put slogv n v
+put slogw n w
+end
+sp SNLOG add n 1
+end
+fn siminit to void
+for i ulong 18
+sp i 0
+end
+for j ulong 256
+put semem j 0
+end
+note an old message in the channel: HEAD != TAIL until busy_reads HEAD reads have passed
+if ne get scfg 0 0
+sp SQHEAD 0
+sp SQTAIL 16
+end
+note SIM-CHOICE: target locked to SEC2, low byte 0xA7 (0xBADF41A7); idle SEC2 MAILBOX0 0
+sp SHWCFG2 3135193511
+sp SS2MB0 0
+sp SLEFT get scfg 0
+end
+note SEC2 checks the packet: MCTP SOM|EOM 0xC0000000, NVDM 0x1410DE7E, payload version 1, size 860,
+note TAIL 864. Anything else (SIM-CHOICE): consumed, the target mask is never released.
+fn simpkt to bool
+a = and eq sg SQTAIL 864 eq get semem 0 3221225472
+b = and eq get semem 1 336649854 eq and get semem 2 65535 1
+ret and and a b eq shr get semem 2 16 860
+end
+fn srqh to ulong
+if and eq sg SPHASE 0 ne sg SQHEAD sg SQTAIL
+if eq sg SLEFT 0
+sp SQHEAD sg SQTAIL
+else
+sdec SLEFT
+end
+end
+ret sg SQHEAD
+end
+fn srmb0 to ulong
+if eq sg SPHASE 1
+if eq sg SLEFT 0
+sp SS2MB0 0
+sp SQHEAD sg SQTAIL
+if ne sg SPKTOK 0
+sp SPHASE 2
+sp SLEFT get scfg 2
+sp SZLEFT get scfg 9
+else
+sp SPHASE 9
+end
+else
+sdec SLEFT
+end
+end
+ret sg SS2MB0
+end
+fn srfmc to void
+if eq sg SLEFT 0
+if ne get scfg 5 0
+sp SGMB0 get scfg 5
+else
+sp SHWCFG2 and sg SHWCFG2 not XLOCK
+sp SPHASE 4
+if eq get scfg 6 0
+sp SCPUCTL XACT
+end
+end
+else
+sdec SLEFT
+end
+end
+fn srhw to ulong
+ph = sg SPHASE
+if and eq ph 2 ne sg SZLEFT 0
+sdec SZLEFT
+ret 0
+end
+if eq ph 2
+if eq sg SLEFT 0
+sp SPHASE 3
+note SIM-CHOICE: other HWCFG2 bits 0x5, so HWCFG2 = 0x2005
+sp SHWCFG2 or XLOCK 5
+pa = get scfg 8
+sp SGMB0 and pa XM32
+sp SGMB1 shr pa 32
+sp SLEFT get scfg 4
+else
+sdec SLEFT
+end
+else
+if and eq ph 3 ne sg SGMB0 and get scfg 8 XM32
+srfmc
+end
+end
+ret sg SHWCFG2
+end
+fn srgmb0 to ulong
+if and eq sg SPHASE 3 eq sg SGMB0 and get scfg 8 XM32
+a = get scfg 3
+if ne a NOEND
+if eq a 0
+sp SGMB0 0
+sp SGMB1 0
+else
+put scfg 3 sub a 1
+end
+end
+end
+ret sg SGMB0
+end
+fn simrd off ulong to ulong
+if ne get spm 0 0
+sviol
+end
+v = ulong 0
+if eq off XS2QH
+v = srqh
+else
+if eq off XS2QT
+v = sg SQTAIL
+else
+if eq off XS2EMC
+v = sg SEMEMC
+else
+if eq off XS2EMD
+e = sg SEMEMC
+v = get semem and add mul and shr e 8 255 64 and shr e 2 63 255
+else
+if eq off XS2MB0
+v = srmb0
+else
+if eq off XS2MB1
+v = sg SS2MB1
+else
+if eq off XGHWCF2
+v = srhw
+else
+if eq off XGMB0
+v = srgmb0
+else
+if eq off XGMB1
+v = sg SGMB1
+else
+if eq off XGOS
+v = sg SOS
+else
+if eq off XGCPUCT
+v = sg SCPUCTL
+else
+sviol
+end
+end
+end
+end
+end
+end
+end
+end
+end
+end
+end
+slog off v 0
+ret v
+end
+fn swememd val ulong to void
+e = sg SEMEMC
+dw = add mul and shr e 8 255 64 and shr e 2 63
+if or or eq and e XAINCW 0 ge dw 256 ne sg SPHASE 0
+sviol
+ret
+end
+put semem dw val
+if eq get scfg 7 0
+dw = add dw 1
+note EMEMC keeps all but bits 2..15 (mask ~0xFFFC = 0xFFFF0003), then block << 8 | offset << 2
+sp SEMEMC or or and e 4294901763 shl and div dw 64 255 8 shl rem dw 64 2
+end
+end
+fn swqh val ulong to void
+ph = sg SPHASE
+note the doorbell: TAIL must already point at the last dword of a message starting at 0
+if or or ne ph 0 ne val 0 eq sg SQTAIL sg SQHEAD
+sviol
+end
+sp SQHEAD val
+if eq ph 0
+if simpkt
+sp SPKTOK 1
+else
+sp SPKTOK 0
+end
+sp SPHASE 1
+sp SS2MB0 XBUSY
+sp SLEFT get scfg 1
+end
+end
+fn simwr off ulong val ulong to void
+if ne get spm 0 0
+sviol
+end
+slog off val 1
+if eq off XS2EMC
+sp SEMEMC val
+ret
+end
+if eq off XS2EMD
+swememd val
+ret
+end
+if eq off XS2QT
+note the driver writes only into an empty channel
+if or ne sg SPHASE 0 ne sg SQHEAD sg SQTAIL
+sviol
+end
+sp SQTAIL val
+ret
+end
+if eq off XS2QH
+swqh val
+ret
+end
+if eq off XGOS
+sp SOS val
+sp SOSPH sg SPHASE
+note FALCON_OS before lockdown release
+if ne sg SPHASE 4
+sviol
+end
+ret
+end
+if eq off XGQH
+sp SGQHW add sg SGQHW 1
+if ne val 0
+sviol
+end
+ret
+end
+sviol
+end

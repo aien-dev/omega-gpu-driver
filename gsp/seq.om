@@ -1,0 +1,200 @@
+note gsp/seq.om: the CPU side of GSP_RUN_CPU_SEQUENCER (event 0x1002) in seeded Omega, a port of
+note aien-dev/aienux PR #441 native/kernel/gpu/gsp_seq.{h,c} (gsp_seq_run, payload_dwords), which replaces
+note NVIDIA's kgspExecuteSequencerBuffer_IMPL (open-gpu-kernel-modules 580.173.02,
+note src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c:5297-5432, called from the 0x1002 handler at :442).
+note Opcodes and payload sizes (rmgspseq.h src/nvidia/arch/nvalloc/common/inc/rmgspseq.h:78-101, :215):
+note   0 REG_WRITE  2 dwords  addr val              BAR0[addr] = val                       kernel_gsp.c:5331
+note   1 REG_MODIFY 3 dwords  addr mask val         BAR0[addr] = (old & ~mask) | val        :5341
+note   2 REG_POLL   5 dwords  addr mask val tmo err wait until (BAR0[addr] & mask) == val   :5356
+note   3 DELAY_US   1 dword   us                    wait us microseconds                   :5383
+note   4 REG_STORE  2 dwords  addr index            save[index] = BAR0[addr], index < 8     :5392, :5397
+note   5 CORE_RESET 6 CORE_START 7 CORE_WAIT_FOR_HALT 8 CORE_RESUME: 0 dwords              :5403 :5412 :5420
+note All nine are here; none is missing. The four core opcodes are falcon HALs in NVIDIA (kflcnReset,
+note kflcnStartCpu, kflcnWaitForHalt; on GB10B CORE_RESUME goes to kgspExecuteSequencerCommand_GA102,
+note g_kernel_gsp_nvoc.c:1028-1047 -> kernel_gsp_ga102.c:136-200). They restart the chip, so, as in the C,
+note they are not guessed at register level: the build supplies fn sqcorefn op ulong to long (0 done,
+note anything else failed) and sets sqcore 1; with sqcore 0 every core opcode is refused.
+note The walk is the C's: nwords (bufferSizeDWord) > 0, ci (cmdIndex) < nwords, stop at ci; an unknown
+note opcode or a payload that runs past ci is refused before anything of it is done. REG_POLL's timeout
+note and error dwords are not used: a poll gets sqbud extra reads (0 counts as 1), as in the C.
+note Library unit: no main. Build after gsp/mmio.om (gsprd, gspwr, gsppause, gspmode, M32) and, for host
+note tests, gsp/sim.om. Register I/O is only gsprd/gspwr; mode 0 is the simulator, mode 1 BAR0.
+note Name prefix sq / SQ only. Nothing here has run on the chip.
+note
+note API: put the dwords in sqbuf[0..nwords), set sqbud (poll budget), sqcore (0/1), clear sqsave and sqdly
+note if wanted, then r = sqrun nwords cmdindex. sqrun returns 0 or a code below; sqwhy r puts the C's why text
+note into sqwb[0..sqwl). sqsave[0..8) gets REG_STORE values; sqdly[0] counts DELAY_US opcodes, sqdly[1]
+note adds their microseconds (mode 1 also sleeps them).
+note Codes: -1 empty buffer; -2 cmdIndex not inside the buffer; -3 unknown opcode; -4 opcode overruns
+note cmdIndex; -5 poll timed out; -6 save index out of range; -7 core opcode with no core callback;
+note -8 core opcode failed; .om only: -9 nwords over 16384 (sqbuf, the 64 KiB GSP message limit,
+note message_queue_priv.h:91-96, as dwords); -10 the mode 1 sleep failed; -11 poll budget over 999998
+note (the OM-1 loop bound). The C's "null argument" has no counterpart: nothing here can be null.
+const SQMAX ulong 16384
+const SQSAVE ulong 8
+const SQBMAX ulong 999998
+note opcode numbers (rmgspseq.h:78-101)
+const SQWR ulong 0
+const SQMOD ulong 1
+const SQPOLL ulong 2
+const SQDLY ulong 3
+const SQSTO ulong 4
+const SQCRST ulong 5
+const SQCRES ulong 8
+const SQEEMP long -1
+const SQEIDX long -2
+const SQEOP long -3
+const SQEOVR long -4
+const SQEPOLL long -5
+const SQESAVE long -6
+const SQENOC long -7
+const SQECORE long -8
+const SQECAP long -9
+const SQESLP long -10
+const SQEBUD long -11
+text sqwt "empty buffer|cmdIndex not inside the buffer|unknown opcode|opcode overruns cmdIndex|poll timed out|save index out of range|core opcode with no core callback|core opcode failed|nwords over 16384|delay sleep failed|poll budget over 999998|"
+global sqbuf uint 16384
+global sqsave ulong 8
+global sqbud ulong 1
+global sqcore ulong 1
+global sqdly ulong 2
+global sqwb uchar 64
+global sqwl ulong 1
+note payload dwords of op, M32 for an unknown opcode (GSP_SEQUENCER_PAYLOAD_SIZE_DWORDS)
+fn sqpay op ulong to ulong
+if or eq op SQWR eq op SQSTO
+ret 2
+end
+if eq op SQMOD
+ret 3
+end
+if eq op SQPOLL
+ret 5
+end
+if eq op SQDLY
+ret 1
+end
+if and ge op SQCRST le op SQCRES
+ret 0
+end
+ret M32
+end
+fn sqw i ulong to ulong
+ret ulong get sqbuf i
+end
+fn sqpoll a0 ulong a1 ulong a2 ulong to long
+left = get sqbud 0
+if eq left 0
+left = 1
+end
+v = and gsprd a0 M32
+while ne and v a1 a2 bound 999999
+if eq left 0
+ret SQEPOLL
+end
+left = sub left 1
+gsppause
+v = and gsprd a0 M32
+end
+ret 0
+end
+note one opcode whose payload starts at sqbuf[i]
+fn sqone op ulong i ulong to long
+if eq op SQWR
+gspwr sqw i sqw add i 1
+ret 0
+end
+if eq op SQMOD
+a = sqw i
+v = and gsprd a M32
+gspwr a or and v xor sqw add i 1 M32 sqw add i 2
+ret 0
+end
+if eq op SQPOLL
+r = sqpoll sqw i sqw add i 1 sqw add i 2
+ret r
+end
+if eq op SQDLY
+us = sqw i
+put sqdly 0 add get sqdly 0 1
+put sqdly 1 add get sqdly 1 us
+if eq get gspmode 0 1
+s = sleepns long mul us 1000
+if lt s 0
+ret SQESLP
+end
+end
+ret 0
+end
+if eq op SQSTO
+k = sqw add i 1
+if ge k SQSAVE
+ret SQESAVE
+end
+put sqsave k and gsprd sqw i M32
+ret 0
+end
+if eq get sqcore 0 0
+ret SQENOC
+end
+c = sqcorefn op
+if ne c 0
+ret SQECORE
+end
+ret 0
+end
+fn sqrun nw ulong ci ulong to long
+put sqwl 0 0
+if eq nw 0
+ret SQEEMP
+end
+if ge ci nw
+ret SQEIDX
+end
+if gt nw SQMAX
+ret SQECAP
+end
+if gt get sqbud 0 SQBMAX
+ret SQEBUD
+end
+i = ulong 0
+while lt i ci bound 999999
+op = sqw i
+i = add i 1
+n = sqpay op
+if eq n M32
+ret SQEOP
+end
+if gt add i n ci
+ret SQEOVR
+end
+r = sqone op i
+if ne r 0
+ret r
+end
+i = add i n
+end
+ret 0
+end
+note the why text of code e into sqwb[0..sqwl); 0 leaves it empty
+fn sqwhy e long to void
+put sqwl 0 0
+if ge e 0
+ret
+end
+k = ulong sub 0 add e 1
+w = ulong 0
+o = ulong 0
+for j ulong len sqwt
+c = get sqwt j
+if eq c 124
+w = add w 1
+else
+if eq w k
+put sqwb o c
+o = add o 1
+end
+end
+end
+put sqwl 0 o
+end

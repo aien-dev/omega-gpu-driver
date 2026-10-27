@@ -1,0 +1,1526 @@
+note gsp/bindata.om: the NVIDIA generated bindata reader in seeded Omega (OM-1). Ports the extract path
+note of aienux PR #441 native/kernel/tools/ck_gsp_bindata_extract.c: refuse, next_line, after,
+note parse_u32, copy_field, parse_hex_array, parse_pvt, parse_archive, parse_file, find_label,
+note decode_desc, region_ok, check_semantics, report (stdout lines; no --out writing) and the read
+note step of cmd_extract. Every refusal text is the C's, "line N: " prefix included.
+note Library unit: no main. Prefix bd. Needs gsp/sha2.om, gsp/inflate.om and gsp/fw.om first
+note (SHA-256/384, DEFLATE + CRC-32 + ISIZE, and the fwo* stdout writer).
+note The text is read through a 1 MiB pread window (the C reads the whole file, at most 64 MiB, first;
+note this port hashes the whole file first, so a read failure is still reported before any parse).
+note Deviations (documented): arrays live in two 16 MiB pools, bdraw for compressed arrays as stored and
+note bdpl for plain bytes (uncompressed arrays are parsed straight into bdpl). Running out of a pool is
+note the C's own "out of memory for LABEL" refusal; the C would malloc up to MAX_ARRAY per array and
+note DATA SIZE per inflated array. A directory path is refused as "File too large", the text the C
+note prints on this host (glibc ftell on a directory).
+const BDMAXB ulong 16
+const BDPOOL ulong 16777216
+const BDMAXA ulong 8388608
+const BDNONE ulong 999
+const BDUNS ulong 4294967295
+const BDWIN ulong 1048576
+global bdok ulong 1
+global bdsgb ulong 160
+global bdsgl ulong 160
+global bdpath uchar 4096
+global bdpathn ulong 1
+global bdfd int 1
+global bdst uchar 128
+global bdfsz ulong 1
+global bdfpos ulong 1
+global bdtp ulong 1
+global bdte ulong 1
+global bdtx uchar 1048576
+global bdln uchar 520
+global bdll ulong 1
+global bdlno ulong 1
+global bdrs uchar 256
+global bdrsn ulong 1
+global bdn ulong 1
+global bdarc ulong 1
+global bdcmp ulong 16
+global bdds ulong 16
+global bdcs ulong 16
+global bdhh ulong 16
+global bdhd ulong 16
+global bdhp ulong 16
+global bdnb ulong 16
+global bdbo ulong 16
+global bdpo ulong 16
+global bdpn ulong 16
+global bdfn uchar 1536
+global bdfnl ulong 16
+global bdlb uchar 1024
+global bdlbl ulong 16
+global bdfm uchar 2560
+global bdfml ulong 16
+global bdid uchar 3072
+global bdidl ulong 16
+global bdraw uchar 16777216
+global bdrtop ulong 1
+global bdpl uchar 16777216
+global bdptop ulong 1
+global bdimg uchar 64
+global bdimgn ulong 1
+global bdfsh uchar 64
+note segment k of BDTXT is the text between the k-th and (k+1)-th '|': 1..76 refusal pieces in C
+note wording, 77..114 the C's line prefixes and tokens, 115.. report pieces
+text BDTXT "|line |: |line longer than 511 characters|array size out of range for |expected '{' after the array declaration of |out of memory for |file ends inside the array of |non-hex token in the array of |byte token without a trailing comma in |more bytes than the declared size in |fewer bytes than the declared size in |expected '{' in the storage record of |storage record: bad uncompressed size for |storage record: uncompressed size differs from DATA SIZE for |storage record: bad compressed size for |storage record: compressed size differs from the header for |storage record: missing pointer line for |storage record: data pointer is not the array of |storage record: missing compressed flag for |storage record: bad compressed flag for |storage record: compressed flag disagrees with COMPRESSION for |second archive table|archive table name is not the file's function|expected '{' after the archive declaration|archive: bad entryNum|archive: entryNum differs from the number of arrays|archive: expected entries block|archive: expected the entries comment|archive: missing entry |archive: malformed entry for |archive: entry order or label differs from the arrays at |archive: entry without a storage index for |archive: storage index is not this array for |archive: expected end of entries|archive: expected end of table|array | has no data or no storage record|more than 16 arrays|FUNCTION line without a BINDATA_LABEL|FUNCTION line not terminated|bad function name|bad label|array belongs to a different function: |duplicate label |function is not a kgspGetBinArchive function: |identifier too long for |data before the first FUNCTION header|bad file name for |FILE TYPE is not BINARY for |COMPRESSION is neither YES nor NO for |COMPLEX_STRUCT is not NO for |bad DATA SIZE for |bad COMPRESSED SIZE for |second array for |array header incomplete for |COMPRESSED SIZE missing with COMPRESSION YES for |COMPRESSED SIZE given with COMPRESSION NO for |array identifier is not the expected one for |storage record before the array of |second storage record for |no arrays found|no archive table|descriptor is not 84 bytes: |descriptor version is not 5: |descriptor monitor not enabled: |descriptor without a matching image: |descriptor manifest region outside the image or unaligned: |descriptor monitor-data region outside the image or unaligned: |descriptor monitor-code region outside the image or unaligned: |hash array is not 48 bytes|hash array without UCODE_IMAGE|UCODE_HASH is not SHA-384 of UCODE_IMAGE| is not 384 bytes|unknown label | (|)|// FUNCTION: |(\"BINDATA_LABEL_|\")|kgspGetBinArchive|kgspBinArchive|_BINDATA_LABEL_|_data|// FILE NAME: |// FILE TYPE: |BINARY|// COMPRESSION: |YES|NO|// COMPLEX_STRUCT: |// DATA SIZE (bytes): |// COMPRESSED SIZE (bytes): |N/A|static BINDATA_CONST NvU8 |[] = |#if defined(BINDATA_INCLUDE_STORAGE_PVT_DEFN)|static const BINDATA_ARCHIVE __|static BINDATA_CONST|static const BINDATA_ARCHIVE|{|};|NV_TRUE,|NV_FALSE,| =|// entries[]|{ BINDATA_LABEL_|&g_bindata_pvt[__idx_|}|UCODE_DESC|UCODE_IMAGE|UCODE_HASH|UCODE_SIG|UCODE_PKEY|//|function | arrays=|desc | version=| manifest=0x|+0x| monitor_data=0x| monitor_code=0x| monitor_enabled=| fb_reserved=0x| signed_as_code=| app_version=| image=|/|hash384 UCODE_HASH equals sha384(UCODE_IMAGE)| file=| stored=| compressed=|yes|no| size=| sha256=|RESULT OK arrays=|REFUSED: |REFUSED: cannot read | |"
+note build the segment table and reset the pools (call once per program)
+fn bdsetup to void
+if eq get bdok 0 1
+ret
+end
+put bdok 0 1
+fwsetup
+infsetup
+seg = ulong 0
+for i ulong len BDTXT
+c = get BDTXT i
+if eq c 124
+seg = add seg 1
+put bdsgb seg add i 1
+put bdsgl seg 0
+else
+put bdsgl seg add get bdsgl seg 1
+end
+end
+put bdrtop 0 0
+put bdptop 0 0
+end
+note ---- printing through the fw.om writer ----
+fn bdos k ulong to void
+b = get bdsgb k
+for i ulong get bdsgl k
+fwoc get BDTXT add b i
+end
+end
+fn bdolab i ulong to void
+b = mul i 64
+for j ulong get bdlbl i
+fwoc get bdlb add b j
+end
+end
+fn bdofn i ulong to void
+b = mul i 96
+for j ulong get bdfnl i
+fwoc get bdfn add b j
+end
+end
+fn bdofm i ulong to void
+b = mul i 160
+for j ulong get bdfml i
+fwoc get bdfm add b j
+end
+end
+fn bdopath to void
+for i ulong get bdpathn 0
+fwoc get bdpath i
+end
+end
+note ---- the refusal reason (C f->reason, 256 bytes: at most 255 characters kept) ----
+fn bdrc c uchar to void
+n = get bdrsn 0
+if lt n 255
+put bdrs n c
+put bdrsn 0 add n 1
+end
+end
+fn bdrseg k ulong to void
+b = get bdsgb k
+for i ulong get bdsgl k
+bdrc get BDTXT add b i
+end
+end
+fn bdrlab i ulong to void
+b = mul i 64
+for j ulong get bdlbl i
+bdrc get bdlb add b j
+end
+end
+fn bdrfn i ulong to void
+b = mul i 96
+for j ulong get bdfnl i
+bdrc get bdfn add b j
+end
+end
+note "line N: " (C refuse: N is the cursor's line count, 0 when the cursor is NULL)
+fn bdrhd ln ulong to void
+put bdrsn 0 0
+bdrseg 1
+d = new uchar 24 0
+n = ulong 0
+x = ln
+while lt n 24 bound 24
+put d n add uchar rem x 10 48
+n = add n 1
+x = div x 10
+if eq x 0
+break
+end
+end
+while gt n 0 bound 24
+n = sub n 1
+bdrc get d n
+end
+bdrseg 2
+end
+note refuse at the current line with reason k, then the label of block b unless b is BDNONE
+fn bdrl k ulong b ulong to ulong
+bdrhd get bdlno 0
+bdrseg k
+if ne b BDNONE
+bdrlab b
+end
+ret 2
+end
+note refuse at the current line with reason k and the function name of block b
+fn bdrf k ulong b ulong to ulong
+bdrhd get bdlno 0
+bdrseg k
+bdrfn b
+ret 2
+end
+note refuse with line 0 (semantic checks) with reason k, then the label of b unless BDNONE
+fn bdr0 k ulong b ulong to ulong
+bdrhd 0
+bdrseg k
+if ne b BDNONE
+bdrlab b
+end
+ret 2
+end
+note "array LABEL has no data or no storage record" at the current line
+fn bdrnd b ulong to ulong
+bdrhd get bdlno 0
+bdrseg 36
+bdrlab b
+bdrseg 37
+ret 2
+end
+note ---- the text window and C next_line ----
+note keep at least 512 unread bytes in bdtx unless the file is used up: 0, or 3 on a read error
+fn bdfill to ulong
+tp = get bdtp 0
+av = sub get bdte 0 tp
+if ge av 512
+ret 0
+end
+fp = get bdfpos 0
+if ge fp get bdfsz 0
+ret 0
+end
+for i ulong av
+put bdtx i get bdtx add tp i
+end
+put bdtp 0 0
+put bdte 0 av
+w = sub BDWIN av
+lf = sub get bdfsz 0 fp
+if lt lf w
+w = lf
+end
+q = ulong 0
+while lt q w bound 999999
+r = pread get bdfd 0 bdtx add av q sub w q long add fp q
+if lt r 1
+ret 3
+end
+q = add q ulong r
+end
+put bdte 0 add av w
+put bdfpos 0 add fp w
+ret 0
+end
+note C next_line into bdln[0..bdll): 1 = a line, 0 = end of text, 2 = longer than 511 characters
+note (reason set, line count advanced), 3 = read error. A trailing CR is dropped and the line ends
+note at its first NUL (the C's string view of its buffer).
+fn bdnext to ulong
+e = bdfill
+if ne e 0
+ret 3
+end
+tp = get bdtp 0
+te = get bdte 0
+if ge tp te
+ret 0
+end
+lim = add tp 512
+if gt lim te
+lim = te
+end
+j = tp
+nl = ulong 0
+while lt j lim bound 600
+if eq get bdtx j 10
+nl = 1
+break
+end
+j = add j 1
+end
+put bdlno 0 add get bdlno 0 1
+n = sub j tp
+if ge n 512
+bdrhd get bdlno 0
+bdrseg 3
+ret 2
+end
+for i ulong n
+put bdln i get bdtx add tp i
+end
+if gt n 0
+if eq get bdln sub n 1 13
+n = sub n 1
+end
+end
+k = ulong 0
+while lt k n bound 600
+if eq get bdln k 0
+break
+end
+k = add k 1
+end
+put bdln k 0
+put bdll 0 k
+if eq nl 1
+put bdtp 0 add j 1
+else
+put bdtp 0 te
+end
+ret 1
+end
+note ---- string helpers over the line ----
+fn bdlc i ulong to uchar
+if ge i get bdll 0
+ret 0
+end
+ret get bdln i
+end
+note does the line at p start with segment k (C after / strncmp)?
+fn bdpre p ulong k ulong to ulong
+b = get bdsgb k
+l = get bdsgl k
+if gt add p l get bdll 0
+ret 0
+end
+for i ulong l
+if ne get bdln add p i get BDTXT add b i
+ret 0
+end
+end
+ret 1
+end
+note is the line from p to its end exactly segment k (C strcmp)?
+fn bdeqs p ulong k ulong to ulong
+L = get bdll 0
+if gt p L
+ret 0
+end
+if ne sub L p get bdsgl k
+ret 0
+end
+ret bdpre p k
+end
+note C strspn(line + p, " ")
+fn bdsp p ulong to ulong
+q = p
+L = get bdll 0
+while lt q L bound 600
+if ne get bdln q 32
+break
+end
+q = add q 1
+end
+ret q
+end
+note first position at or after p where segment k occurs (C strstr), BDNONE if none
+fn bdfind p ulong k ulong to ulong
+q = p
+L = get bdll 0
+while le q L bound 600
+if eq bdpre q k 1
+ret q
+end
+q = add q 1
+end
+ret BDNONE
+end
+note first '(' at or after p (C strchr), BDNONE if none
+fn bdfpar p ulong to ulong
+q = p
+L = get bdll 0
+while lt q L bound 600
+if eq get bdln q 40
+ret q
+end
+q = add q 1
+end
+ret BDNONE
+end
+note C parse_u32 at p: decimal at most 4294967295, then spaces, commas or tabs, then the end or "//"
+fn bdu32 p ulong to long
+c = bdlc p
+if lt c 48
+ret -1
+end
+if gt c 57
+ret -1
+end
+acc = ulong 0
+q = p
+while lt q get bdll 0 bound 600
+c = get bdln q
+if lt c 48
+break
+end
+if gt c 57
+break
+end
+acc = add mul acc 10 sub ulong c 48
+if gt acc BDUNS
+ret -1
+end
+q = add q 1
+end
+while lt q get bdll 0 bound 600
+c = get bdln q
+if and and ne c 32 ne c 44 ne c 9
+break
+end
+q = add q 1
+end
+if lt q get bdll 0
+if eq bdpre q 114 0
+ret -1
+end
+end
+ret long acc
+end
+note does the line at p hold the first n characters of block i's identifier?
+fn bdlnid p ulong i ulong n ulong to ulong
+if gt add p n get bdll 0
+ret 0
+end
+b = mul i 192
+for j ulong n
+if ne get bdln add p j get bdid add b j
+ret 0
+end
+end
+ret 1
+end
+note does the line at p start with block i's label?
+fn bdlnlb p ulong i ulong to ulong
+n = get bdlbl i
+if gt add p n get bdll 0
+ret 0
+end
+b = mul i 64
+for j ulong n
+if ne get bdln add p j get bdlb add b j
+ret 0
+end
+end
+ret 1
+end
+note does the line at p start with block i's function name?
+fn bdlnfn p ulong i ulong to ulong
+n = get bdfnl i
+if gt add p n get bdll 0
+ret 0
+end
+b = mul i 96
+for j ulong n
+if ne get bdln add p j get bdfn add b j
+ret 0
+end
+end
+ret 1
+end
+note labels of blocks i and j equal?
+fn bdlbeq i ulong j ulong to ulong
+n = get bdlbl i
+if ne n get bdlbl j
+ret 0
+end
+a = mul i 64
+b = mul j 64
+for k ulong n
+if ne get bdlb add a k get bdlb add b k
+ret 0
+end
+end
+ret 1
+end
+note function names of blocks i and j equal?
+fn bdfneq i ulong j ulong to ulong
+n = get bdfnl i
+if ne n get bdfnl j
+ret 0
+end
+a = mul i 96
+b = mul j 96
+for k ulong n
+if ne get bdfn add a k get bdfn add b k
+ret 0
+end
+end
+ret 1
+end
+note label of block i starts with segment k (sw 0) or equals it (sw 1)?
+fn bdlbsg i ulong k ulong sw ulong to ulong
+n = get bdlbl i
+l = get bdsgl k
+if lt n l
+ret 0
+end
+if eq sw 1
+if ne n l
+ret 0
+end
+end
+a = mul i 64
+b = get bdsgb k
+for j ulong l
+if ne get bdlb add a j get BDTXT add b j
+ret 0
+end
+end
+ret 1
+end
+note function name of block i starts with segment k?
+fn bdfnsg i ulong k ulong to ulong
+n = get bdfnl i
+l = get bdsgl k
+if lt n l
+ret 0
+end
+a = mul i 96
+b = get bdsgb k
+for j ulong l
+if ne get bdfn add a j get BDTXT add b j
+ret 0
+end
+end
+ret 1
+end
+note C find_label for the name in bdimg[0..bdimgn): block index or BDNONE
+fn bdfimg to ulong
+for i ulong get bdn 0
+n = get bdlbl i
+if eq n get bdimgn 0
+a = mul i 64
+m = ulong 1
+for j ulong n
+if ne get bdlb add a j get bdimg j
+m = 0
+end
+end
+if eq m 1
+ret i
+end
+end
+end
+ret BDNONE
+end
+note C find_label for segment k: block index or BDNONE
+fn bdfseg k ulong to ulong
+for i ulong get bdn 0
+if eq bdlbsg i k 1 1
+ret i
+end
+end
+ret BDNONE
+end
+note ---- C copy_field into the block's fields (len checked by the caller) ----
+fn bdsetfn i ulong p ulong n ulong to void
+b = mul i 96
+for j ulong n
+put bdfn add b j get bdln add p j
+end
+put bdfnl i n
+end
+fn bdsetlb i ulong p ulong n ulong to void
+b = mul i 64
+for j ulong n
+put bdlb add b j get bdln add p j
+end
+put bdlbl i n
+end
+fn bdsetfm i ulong p ulong n ulong to void
+b = mul i 160
+for j ulong n
+put bdfm add b j get bdln add p j
+end
+put bdfml i n
+end
+note append segment k to block i's identifier at q; returns the new end
+fn bdidsg i ulong q ulong k ulong to ulong
+b = mul i 192
+s = get bdsgb k
+for j ulong get bdsgl k
+put bdid add b add q j get BDTXT add s j
+end
+ret add q get bdsgl k
+end
+note identifier kgspBinArchive<stem>_BINDATA_LABEL_<label>_data (caller checked its length)
+fn bdmkid i ulong to void
+b = mul i 192
+q = bdidsg i 0 81
+fb = mul i 96
+note stem = function name after "kgspGetBinArchive" (17 characters)
+for j ulong sub get bdfnl i 17
+put bdid add b q get bdfn add add fb 17 j
+q = add q 1
+end
+q = bdidsg i q 82
+lb = mul i 64
+for j ulong get bdlbl i
+put bdid add b q get bdlb add lb j
+q = add q 1
+end
+q = bdidsg i q 83
+put bdidl i q
+end
+note ---- C parse_file: one "// FUNCTION: " line ----
+fn bdfunc to ulong
+n = get bdn 0
+if gt n 0
+b = sub n 1
+if eq and eq get bdhd b 1 eq get bdhp b 1 false
+ret bdrnd b
+end
+end
+if ge n BDMAXB
+ret bdrl 38 BDNONE
+end
+v = get bdsgl 77
+lp = bdfpar v
+if eq lp BDNONE
+ret bdrl 39 BDNONE
+end
+if eq bdpre lp 78 0
+ret bdrl 39 BDNONE
+end
+pe = bdfind add lp 16 79
+if eq pe BDNONE
+ret bdrl 40 BDNONE
+end
+if ne add pe 2 get bdll 0
+ret bdrl 40 BDNONE
+end
+put bdn 0 add n 1
+fl = sub lp v
+if or eq fl 0 ge fl 96
+ret bdrl 41 BDNONE
+end
+bdsetfn n v fl
+ll = sub sub pe lp 16
+if or eq ll 0 ge ll 64
+ret bdrl 42 BDNONE
+end
+bdsetlb n add lp 16 ll
+ret bdfunc2 n
+end
+note the rest of the FUNCTION header: same function, unique label, stem, identifier
+fn bdfunc2 n ulong to ulong
+if gt n 0
+if eq bdfneq 0 n 0
+ret bdrf 43 n
+end
+end
+for j ulong n
+if eq bdlbeq j n 1
+ret bdrl 44 n
+end
+end
+put bdcs n BDUNS
+put bdcmp n 2
+put bdds n 0
+put bdhh n 0
+put bdhd n 0
+put bdhp n 0
+put bdnb n 0
+put bdfml n 0
+if eq bdfnsg n 80 0
+ret bdrf 45 n
+end
+note 14 + (funclen - 17) + 15 + labellen + 5 characters must stay below 192
+t = add sub get bdfnl n 17 34
+t = add t get bdlbl n
+if ge t 192
+ret bdrl 46 n
+end
+bdmkid n
+ret 0
+end
+note "static BINDATA_CONST NvU8 " line of block b
+fn bdarrhd b ulong to ulong
+if eq get bdhd b 1
+ret bdrl 54 b
+end
+c = get bdcmp b
+m = ulong 0
+if eq c 2
+m = 1
+end
+if eq get bdds b 0
+m = 1
+end
+if eq get bdcs b BDUNS
+m = 1
+end
+if eq get bdfml b 0
+m = 1
+end
+if eq m 1
+ret bdrl 55 b
+end
+if and eq c 1 eq get bdcs b 0
+ret bdrl 56 b
+end
+if and eq c 0 ne get bdcs b 0
+ret bdrl 57 b
+end
+v = get bdsgl 94
+il = get bdidl b
+if eq bdlnid v b il 0
+ret bdrl 58 b
+end
+if eq bdeqs add v il 95 0
+ret bdrl 58 b
+end
+put bdhh b 1
+ret bdhex b
+end
+fn bdhexd c uchar to ulong
+if and ge c 48 le c 57
+ret sub ulong c 48
+end
+if and ge c 97 le c 102
+ret sub ulong c 87
+end
+if and ge c 65 le c 70
+ret sub ulong c 55
+end
+ret 16
+end
+note C parse_hex_array: the "{" line, the byte lines, "};"
+fn bdhex b ulong to ulong
+want = get bdds b
+if eq get bdcmp b 1
+want = get bdcs b
+end
+if or eq want 0 gt want BDMAXA
+ret bdrl 4 b
+end
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 5 b
+end
+if eq bdeqs 0 100 0
+ret bdrl 5 b
+end
+if eq get bdcmp b 1
+t = get bdrtop 0
+if gt add t want BDPOOL
+ret bdrl 6 b
+end
+put bdbo b t
+put bdrtop 0 add t want
+else
+t = get bdptop 0
+if gt add t want BDPOOL
+ret bdrl 6 b
+end
+put bdbo b t
+put bdpo b t
+put bdpn b want
+put bdptop 0 add t want
+end
+put bdnb b 0
+go = ulong 1
+while eq go 1 bound 100
+while eq go 1 bound 999999
+r = bdnext
+if eq r 3
+ret 3
+end
+if eq r 2
+ret 2
+end
+if eq r 0
+ret bdrl 7 b
+end
+if eq bdeqs 0 101 1
+go = 0
+else
+e = bdhexln b want
+if ne e 0
+ret e
+end
+end
+end
+end
+if ne get bdnb b want
+ret bdrl 11 b
+end
+put bdhd b 1
+ret 0
+end
+note one line of "0xHH," tokens of block b
+fn bdhexln b ulong want ulong to ulong
+p = ulong 0
+L = get bdll 0
+cm = get bdcmp b
+base = get bdbo b
+while lt p L bound 600
+while lt p L bound 600
+c = get bdln p
+if and ne c 32 ne c 9
+break
+end
+p = add p 1
+end
+if ge p L
+break
+end
+if ne bdlc p 48
+ret bdrl 8 b
+end
+if ne bdlc add p 1 120
+ret bdrl 8 b
+end
+h = bdhexd bdlc add p 2
+if eq h 16
+ret bdrl 8 b
+end
+l = bdhexd bdlc add p 3
+if eq l 16
+ret bdrl 8 b
+end
+if ne bdlc add p 4 44
+ret bdrl 9 b
+end
+nb = get bdnb b
+if ge nb want
+ret bdrl 10 b
+end
+v = uchar add mul h 16 l
+if eq cm 1
+put bdraw add base nb v
+else
+put bdpl add base nb v
+end
+put bdnb b add nb 1
+p = add p 5
+end
+ret 0
+end
+note C parse_pvt: the storage record after "#if defined(BINDATA_INCLUDE_STORAGE_PVT_DEFN)"
+fn bdpvt b ulong to ulong
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 12 b
+end
+if eq bdeqs 0 100 0
+ret bdrl 12 b
+end
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 13 b
+end
+v = bdu32 bdsp 0
+if lt v 0
+ret bdrl 13 b
+end
+if ne ulong v get bdds b
+ret bdrl 14 b
+end
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 15 b
+end
+v = bdu32 bdsp 0
+if lt v 0
+ret bdrl 15 b
+end
+w = get bdds b
+if eq get bdcmp b 1
+w = get bdcs b
+end
+if ne ulong v w
+ret bdrl 16 b
+end
+ret bdpvt2 b
+end
+note the pointer and flag lines of the storage record
+fn bdpvt2 b ulong to ulong
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 17 b
+end
+p = bdsp 0
+il = get bdidl b
+if eq bdlnid p b il 0
+ret bdrl 18 b
+end
+if ne bdlc add p il 44
+ret bdrl 18 b
+end
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 19 b
+end
+p = bdsp 0
+fl = ulong 2
+if eq bdpre p 102 1
+fl = 1
+else
+if eq bdpre p 103 1
+fl = 0
+end
+end
+if eq fl 2
+ret bdrl 20 b
+end
+if ne fl get bdcmp b
+ret bdrl 21 b
+end
+put bdhp b 1
+ret 0
+end
+note C parse_archive (the declaration is the current line)
+fn bdarch to ulong
+if eq get bdarc 0 1
+ret bdrl 22 BDNONE
+end
+p = get bdsgl 97
+if eq bdlnfn p 0 0
+ret bdrl 23 BDNONE
+end
+if eq bdeqs add p get bdfnl 0 104 0
+ret bdrl 23 BDNONE
+end
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 24 BDNONE
+end
+if eq bdeqs 0 100 0
+ret bdrl 24 BDNONE
+end
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 25 BDNONE
+end
+v = bdu32 bdsp 0
+if lt v 0
+ret bdrl 25 BDNONE
+end
+if ne ulong v get bdn 0
+ret bdrl 26 BDNONE
+end
+ret bdarch2
+end
+note the entries block of the archive table
+fn bdarch2 to ulong
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 27 BDNONE
+end
+if eq bdeqs bdsp 0 100 0
+ret bdrl 27 BDNONE
+end
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 28 BDNONE
+end
+if eq bdpre bdsp 0 105 0
+ret bdrl 28 BDNONE
+end
+for i ulong get bdn 0
+e = bdarent i
+if ne e 0
+ret e
+end
+end
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 34 BDNONE
+end
+if eq bdeqs bdsp 0 108 0
+ret bdrl 34 BDNONE
+end
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 35 BDNONE
+end
+if eq bdeqs 0 101 0
+ret bdrl 35 BDNONE
+end
+put bdarc 0 1
+ret 0
+end
+note one archive entry, for block i
+fn bdarent i ulong to ulong
+r = bdnext
+if eq r 3
+ret 3
+end
+if ne r 1
+ret bdrl 29 i
+end
+p = bdsp 0
+if eq bdpre p 106 0
+ret bdrl 30 i
+end
+lab = add p get bdsgl 106
+if eq bdlnlb lab i 0
+ret bdrl 31 i
+end
+c = bdlc add lab get bdlbl i
+if and ne c 32 ne c 44
+ret bdrl 31 i
+end
+x = bdfind lab 107
+if eq x BDNONE
+ret bdrl 32 i
+end
+x = add x get bdsgl 107
+il = sub get bdidl i 5
+if eq bdlnid x i il 0
+ret bdrl 33 i
+end
+if ne bdlc add x il 93
+ret bdrl 33 i
+end
+ret 0
+end
+note C parse_file: one line after the FUNCTION check (b = current block)
+fn bdline to ulong
+if eq bdpre 0 77 1
+ret bdfunc
+end
+n = get bdn 0
+if eq n 0
+if or eq bdpre 0 98 1 eq bdpre 0 99 1
+ret bdrl 47 BDNONE
+end
+ret 0
+end
+b = sub n 1
+if eq bdpre 0 84 1
+v = get bdsgl 84
+l = sub get bdll 0 v
+if or eq l 0 ge l 160
+ret bdrl 48 b
+end
+bdsetfm b v l
+ret 0
+end
+if eq bdpre 0 85 1
+if eq bdeqs get bdsgl 85 86 0
+ret bdrl 49 b
+end
+ret 0
+end
+if eq bdpre 0 87 1
+v = get bdsgl 87
+if eq bdeqs v 88 1
+put bdcmp b 1
+else
+if eq bdeqs v 89 1
+put bdcmp b 0
+else
+ret bdrl 50 b
+end
+end
+ret 0
+end
+ret bdline2 b
+end
+note the remaining header comments and the three record kinds
+fn bdline2 b ulong to ulong
+if eq bdpre 0 90 1
+if eq bdeqs get bdsgl 90 89 0
+ret bdrl 51 b
+end
+ret 0
+end
+if eq bdpre 0 91 1
+x = bdu32 get bdsgl 91
+if lt x 0
+ret bdrl 52 b
+end
+put bdds b ulong x
+ret 0
+end
+if eq bdpre 0 92 1
+v = get bdsgl 92
+if eq bdeqs v 93 1
+put bdcs b 0
+else
+x = bdu32 v
+if lt x 0
+ret bdrl 53 b
+end
+put bdcs b ulong x
+end
+ret 0
+end
+if eq bdpre 0 94 1
+ret bdarrhd b
+end
+if eq bdeqs 0 96 1
+if eq get bdhd b 0
+ret bdrl 59 b
+end
+if eq get bdhp b 1
+ret bdrl 60 b
+end
+ret bdpvt b
+end
+if eq bdpre 0 97 1
+if eq and eq get bdhd b 1 eq get bdhp b 1 false
+ret bdrnd b
+end
+ret bdarch
+end
+ret 0
+end
+note copy bdraw[o..o+n) to infin[0..n), n <= 8 MiB, in chunks below the 1,000,000-pass limit
+fn bdcpin o ulong n ulong to void
+p = ulong 0
+while lt p n bound 64
+k = sub n p
+if gt k 524288
+k = 524288
+end
+for j ulong k
+put infin add p j get bdraw add add o p j
+end
+p = add p k
+end
+end
+note copy infout[0..n) to bdpl[o..o+n)
+fn bdcpout o ulong n ulong to void
+p = ulong 0
+while lt p n bound 64
+k = sub n p
+if gt k 524288
+k = 524288
+end
+for j ulong k
+put bdpl add add o p j get infout add p j
+end
+p = add p k
+end
+end
+note inflate block i (C unpack_gz_body) into the plain pool
+fn bdunpk i ulong to ulong
+ds = get bdds i
+t = get bdptop 0
+if gt add t ds BDPOOL
+ret bdrl 6 i
+end
+nb = get bdnb i
+bdcpin get bdbo i nb
+e = infgz nb ds
+if ne e 0
+infmsg e
+bdrhd 0
+for j ulong get infmn 0
+bdrc get infm j
+end
+bdrseg 75
+bdrlab i
+bdrseg 76
+ret 2
+end
+bdcpout t ds
+put bdpo i t
+put bdpn i ds
+put bdptop 0 add t ds
+ret 0
+end
+note C parse_file: the whole text, then the end checks and the inflation; 0, 2 refused, 3 read error
+fn bdparse to ulong
+put bdn 0 0
+put bdarc 0 0
+put bdlno 0 0
+put bdtp 0 0
+put bdte 0 0
+put bdfpos 0 0
+go = ulong 1
+while eq go 1 bound 100
+while eq go 1 bound 999999
+r = bdnext
+if eq r 3
+ret 3
+end
+if eq r 2
+ret 2
+end
+if eq r 0
+go = 0
+else
+e = bdline
+if ne e 0
+ret e
+end
+end
+end
+end
+if eq get bdn 0 0
+ret bdrl 61 BDNONE
+end
+if eq get bdarc 0 0
+ret bdrl 62 BDNONE
+end
+for i ulong get bdn 0
+if eq and eq get bdhd i 1 eq get bdhp i 1 false
+ret bdrnd i
+end
+if eq get bdcmp i 1
+e = bdunpk i
+if ne e 0
+ret e
+end
+end
+end
+ret 0
+end
+note ---- C check_semantics ----
+note little-endian u32 word w of block i's plain bytes
+fn bdw32 i ulong w ulong to ulong
+p = add get bdpo i mul w 4
+v = ulong 0
+for k ulong 4
+v = or v shl ulong get bdpl add p k mul k 8
+end
+ret v
+end
+note C region_ok: size != 0, off % 256 == 0, off + size <= image
+fn bdreg off ulong size ulong img ulong to ulong
+if eq size 0
+ret 0
+end
+if ne rem off 256 0
+ret 0
+end
+if gt add off size img
+ret 0
+end
+ret 1
+end
+note a UCODE_DESC* block
+fn bddesc i ulong to ulong
+if ne get bdpn i 84
+ret bdr0 63 i
+end
+if ne bdw32 i 0 5
+ret bdr0 64 i
+end
+if ne bdw32 i 14 1
+ret bdr0 65 i
+end
+note img = "UCODE_IMAGE" + label suffix after "UCODE_DESC", cut to 63 characters (C char img[64])
+n = ulong 0
+s = get bdsgb 110
+for j ulong get bdsgl 110
+put bdimg n get BDTXT add s j
+n = add n 1
+end
+a = mul i 64
+j = ulong 10
+while lt j get bdlbl i bound 64
+if lt n 63
+put bdimg n get bdlb add a j
+n = add n 1
+end
+j = add j 1
+end
+put bdimgn 0 n
+ib = bdfimg
+if eq ib BDNONE
+ret bdr0 66 i
+end
+ret bddesc2 i ib
+end
+note the three regions, then the desc line
+fn bddesc2 i ulong ib ulong to ulong
+il = get bdpn ib
+if eq bdreg bdw32 i 8 bdw32 i 9 il 0
+ret bdr0 67 i
+end
+if eq bdreg bdw32 i 10 bdw32 i 11 il 0
+ret bdr0 68 i
+end
+if eq bdreg bdw32 i 12 bdw32 i 13 il 0
+ret bdr0 69 i
+end
+bdos 117
+bdolab i
+bdos 118
+fwodec bdw32 i 0
+bdos 119
+fwohex bdw32 i 8
+bdos 120
+fwohex bdw32 i 9
+bdos 121
+fwohex bdw32 i 10
+bdos 120
+fwohex bdw32 i 11
+bdos 122
+fwohex bdw32 i 12
+bdos 120
+fwohex bdw32 i 13
+bdos 123
+fwodec bdw32 i 14
+bdos 124
+fwohex bdw32 i 19
+bdos 125
+fwodec bdw32 i 20
+bdos 126
+fwodec bdw32 i 7
+bdos 127
+for j ulong get bdimgn 0
+fwoc get bdimg j
+end
+bdos 128
+fwodec il
+fwoc 10
+ret 0
+end
+note SHA-384 of bdpl[o..o+n) into shout[0..48)
+fn bdsh384 o ulong n ulong to void
+sh5init
+p = ulong 0
+while lt p n bound 64
+k = sub n p
+if gt k SHWIN
+k = SHWIN
+end
+for j ulong k
+put shin j get bdpl add add o p j
+end
+sh5upd 0 k
+p = add p k
+end
+sh5fin
+end
+note SHA-256 (context 4) of bdpl[o..o+n) into shout[0..32)
+fn bdsh256 o ulong n ulong to void
+sh2init 4
+p = ulong 0
+while lt p n bound 64
+k = sub n p
+if gt k SHWIN
+k = SHWIN
+end
+for j ulong k
+put shin j get bdpl add add o p j
+end
+sh2upd 4 0 k
+p = add p k
+end
+sh2fin 4
+end
+note the UCODE_HASH block
+fn bdhash i ulong to ulong
+if ne get bdpn i 48
+ret bdr0 70 BDNONE
+end
+ib = bdfseg 110
+if eq ib BDNONE
+ret bdr0 71 BDNONE
+end
+bdsh384 get bdpo ib get bdpn ib
+o = get bdpo i
+for j ulong 48
+if ne get shout j get bdpl add o j
+ret bdr0 72 BDNONE
+end
+end
+bdos 129
+fwoc 10
+ret 0
+end
+fn bdsem to ulong
+for i ulong get bdn 0
+e = ulong 0
+if eq bdlbsg i 109 0 1
+e = bddesc i
+else
+if eq bdlbsg i 111 1 1
+e = bdhash i
+else
+if or eq bdlbsg i 112 1 1 eq bdlbsg i 113 1 1
+if ne get bdpn i 384
+bdrhd 0
+bdrlab i
+bdrseg 73
+e = 2
+end
+else
+if eq bdlbsg i 110 0 0
+e = bdr0 74 i
+end
+end
+end
+end
+if ne e 0
+ret e
+end
+end
+ret 0
+end
+note C report without --out: one array line per block
+fn bdreport to void
+for i ulong get bdn 0
+bdos 36
+bdofn i
+bdos 140
+bdolab i
+bdos 130
+bdofm i
+bdos 131
+fwodec get bdnb i
+bdos 132
+if eq get bdcmp i 1
+bdos 133
+else
+bdos 134
+end
+bdos 135
+fwodec get bdpn i
+bdos 136
+bdsh256 get bdpo i get bdpn i
+shhex 32
+fwohx 32
+fwoc 10
+end
+end
+note "REFUSED: cannot read PATH: <strerror e>"
+fn bdcantrd e ulong to ulong
+bdos 139
+bdopath
+fwos 64
+fwoerrno e
+fwoc 10
+ret 2
+end
+note C cmd_extract (no --out) for the path in bdpath[0..bdpathn). Prints the C's stdout bytes
+note through the fw.om writer. Returns 0 = RESULT OK, 2 = REFUSED. bdfsh gets the file's SHA-256
+note hex, bdfsz its size; the blocks stay in bd* for the caller (bdpl keeps the plain bytes across
+note calls: the pools are only reset by bdsetup).
+fn bdfile to ulong
+bdsetup
+fd = fopen bdpath 0 get bdpathn 0 524288 0
+if lt fd 0
+ret bdcantrd ulong neg fd
+end
+put bdfd 0 int fd
+s = fstat int fd bdst 0 128
+if lt s 0
+c = fclose int fd
+ret bdcantrd ulong neg s
+end
+sz = ulong 0
+for i ulong 8
+sz = or sz shl ulong get bdst add 48 i mul i 8
+end
+md = ulong 0
+for i ulong 4
+md = or md shl ulong get bdst add 16 i mul i 8
+end
+note S_IFMT 0170000 = 61440, S_IFDIR 0040000 = 16384; 64 MiB = 67108864 (the C's read_file limit)
+if or eq and md 61440 16384 gt sz 67108864
+c = fclose int fd
+ret bdcantrd 27
+end
+put bdfsz 0 sz
+sh2init 3
+r = sh2file 3 int fd 0 sz
+if ne r 0
+c = fclose int fd
+ret bdcantrd 5
+end
+sh2fin 3
+shhex 32
+for i ulong 64
+put bdfsh i get shhx i
+end
+ret bdfile2 int fd
+end
+fn bdfile2 fd int to ulong
+e = bdparse
+c = fclose fd
+if eq e 3
+ret bdcantrd 5
+end
+if eq e 2
+bdos 138
+for i ulong get bdrsn 0
+fwoc get bdrs i
+end
+fwoc 10
+ret 2
+end
+bdos 115
+for i ulong get bdfnl 0
+fwoc get bdfn i
+end
+bdos 116
+fwodec get bdn 0
+fwoc 10
+e = bdsem
+if eq e 2
+bdos 138
+for i ulong get bdrsn 0
+fwoc get bdrs i
+end
+fwoc 10
+ret 2
+end
+bdreport
+bdos 137
+fwodec get bdn 0
+fwoc 10
+ret 0
+end

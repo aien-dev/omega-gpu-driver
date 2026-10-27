@@ -1,0 +1,264 @@
+note tests/chan_trace.om: the differential trace driver for the channel port. It replays aienux PR #441
+note native/kernel/tests/gpu_chan_trace.c (branch pr441 @ c5bb3a4b) line for line on chan/sim.om and
+note prints the same text: after every operation its rc, every register access the simulator logged
+note since the last line, the doorbell count and FNV-1a 64 of the whole 8 MiB simulated memory.
+note Build: cat chan/gmmu.om chan/mem.om chan/chan.om chan/sim.om tests/chan_trace.om | omc > prog.
+note Prefix ct. Host only: mmmode is 0 (the simulator) for the whole run.
+note memory: 8 MiB at bus address 0x80000000, page-table pool there (64 pages), data at 0x80040000
+note (128 pages), GPU VA base 0x200000000
+const CTPA ulong 2147483648
+const CTMEM ulong 8388608
+const CTDATA ulong 2147745792
+const CTVA ulong 8589934592
+note FNV-1a 64 offset basis 0xcbf29ce484222325 and prime 0x100000001b3
+const CTFNVO ulong 14695981039346656037
+const CTFNVP ulong 1099511628211
+const CTFOR ulong 1000
+text ctt "setup|create chid>max|create runlist=0x7f|create entries=24|create entries=1|create|alloc pb|alloc sem|submit off=2|submit nwords=0|submit past end|submit foreign buf|submit |retire put=| ret=|retire past put ret=|teardown idle|teardown again|submit after close|create (hung run)|teardown hung| rc=| doorbells=| mem=|token=| rl=|quarantined_pages=| free_pages=|setup failed\n"
+global ctob uchar 262144
+global ctpos ulong 1
+global ctcnt ulong 1
+global ctlab ulong 1
+global ctdig uchar 24
+global ctstep ulong 1
+global ctseen ulong 1
+fn ctflush to void
+n = get ctpos 0
+if gt n 0
+r = write 1 ctob 0 n
+if ne r long n
+exit 1
+end
+end
+put ctpos 0 0
+end
+fn ctch c uchar to void
+p = get ctpos 0
+put ctob p c
+put ctpos 0 add p 1
+put ctcnt 0 add get ctcnt 0 1
+if ge add p 1 262000
+ctflush
+end
+end
+note the k-th '|'-separated fragment of ctt
+fn ctfrag k ulong to void
+w = ulong 0
+for i ulong len ctt
+c = get ctt i
+if eq c 124
+w = add w 1
+else
+if eq w k
+ctch c
+end
+end
+end
+end
+note %u, and %0Nu with w > 0
+fn ctdecw v ulong w ulong to void
+n = ulong 0
+x = v
+while true bound 24
+put ctdig n uchar add rem x 10 48
+n = add n 1
+x = div x 10
+if eq x 0
+break
+end
+end
+while lt n w bound 24
+put ctdig n 48
+n = add n 1
+end
+for i ulong n
+ctch get ctdig sub sub n 1 i
+end
+end
+fn ctdec v ulong to void
+ctdecw v 0
+end
+fn ctsdec v long to void
+if lt v 0
+ctch 45
+ctdec ulong neg v
+ret
+end
+ctdec ulong v
+end
+note lowercase hex, zero-padded to w digits
+fn cthex v ulong w ulong to void
+n = ulong 0
+x = v
+while true bound 24
+d = uchar rem x 16
+if lt d 10
+put ctdig n add d 48
+else
+put ctdig n add d 87
+end
+n = add n 1
+x = div x 16
+if eq x 0
+break
+end
+end
+while lt n w bound 24
+put ctdig n 48
+n = add n 1
+end
+for i ulong n
+ctch get ctdig sub sub n 1 i
+end
+end
+fn ctfnv to ulong
+h = CTFNVO
+for a ulong 8192
+o = mul a 1024
+for b ulong 1024
+h = mul xor h ulong get mmwin add o b CTFNVP
+end
+end
+ret h
+end
+note "%04u " then the label (printed by the caller); ctend pads it to 24 (%-24s) and ends the line
+fn ctbeg to void
+ctdecw get ctstep 0 4
+put ctstep 0 add get ctstep 0 1
+ctch 32
+put ctlab 0 get ctcnt 0
+end
+fn ctend rc long to void
+while lt sub get ctcnt 0 get ctlab 0 24 bound 64
+ctch 32
+end
+ctfrag 21
+ctsdec rc
+s = get ctseen 0
+n = get gsnlog 0
+while lt s n bound 600
+ctch 32
+if ne get gslogw s 0
+ctch 87
+else
+ctch 82
+end
+cthex ulong get gslogo s 6
+ctch 61
+cthex ulong get gslogv s 8
+s = add s 1
+end
+put ctseen 0 s
+ctfrag 22
+ctdec get gsdb 0
+ctfrag 23
+cthex ctfnv 16
+ctch 10
+ctflush
+end
+fn ctline k ulong rc long to void
+ctbeg
+ctfrag k
+ctend rc
+end
+fn ctfresh to void
+for a ulong 8192
+o = mul a 1024
+for b ulong 1024
+put mmwin add o b 165
+end
+end
+r = mmwinit CTPA CTMEM
+gsinit CTPA CTMEM
+put mmmode 0 0
+put ctseen 0 0
+r1 = mmasinit CTPA 64
+r2 = long 1
+if eq r1 MMOK
+r2 = gminit 10 CTDATA 128 CTVA
+end
+if or ne r MMOK or ne r1 MMOK ne r2 GMOK
+ctfrag 28
+ctflush
+exit 1
+end
+ctline 0 0
+end
+fn main to int
+chinit
+ctfresh
+ctline 1 chcreate 0 4096 1 16
+ctline 2 chcreate 0 3 127 16
+ctline 3 chcreate 0 3 1 24
+ctline 4 chcreate 0 3 1 1
+ctline 5 chcreate 0 3 1 16
+ctfrag 24
+cthex ulong get chtok 0 8
+ctfrag 25
+cthex ulong get chrl0 0 8
+ctch 44
+cthex ulong get chrl1 0 8
+ctch 10
+r = gmalloc 8192 0 GMGPURO
+pb = get gmout 0
+ctline 6 r
+r = gmalloc 4096 1 GMHPOLL
+sem = get gmout 0
+ctline 7 r
+base = get gmbpa pb
+for i ulong 4096
+mmwr8 add base i uchar and mul i 7 255
+end
+ctline 8 chsubmit 0 pb 2 4
+ctline 9 chsubmit 0 pb 0 0
+ctline 10 chsubmit 0 pb 8188 2
+ctline 11 chsubmit 0 CTFOR 0 4
+for i uint 300
+rc = chsubmit 0 pb mul rem i 64 64 add 1 rem i 16
+ctbeg
+ctfrag 12
+ctdec ulong i
+ctend rc
+if or eq rc CHEFULL eq rem i 5 4
+chretire 0 sub get chput 0 rem i 3
+ctbeg
+ctfrag 13
+ctdec ulong get chput 0
+ctfrag 14
+ctdec ulong get chret 0
+ctend 0
+end
+end
+chretire 0 add get chput 0 5
+ctbeg
+ctfrag 15
+ctdec ulong get chret 0
+ctend 0
+put chx 0 pb
+put chx 1 sem
+ctline 16 chteardown 0 4 2
+ctline 17 chteardown 0 4 2
+ctline 18 chsubmit 0 pb 0 4
+ctfresh
+ctline 19 chcreate 0 7 2 8
+r = gmalloc 4096 0 GMGPURO
+pb = get gmout 0
+ctline 6 r
+for i uint 9
+rc = chsubmit 0 pb 0 8
+ctbeg
+ctfrag 12
+ctdec ulong i
+ctend rc
+end
+put gshang 0 1
+put chx 0 pb
+ctline 20 chteardown 0 6 1
+ctfrag 26
+ctdec gmcount GMQUAR
+ctfrag 27
+ctdec gmcount GMFREE
+ctch 10
+ctflush
+ret 0
+end

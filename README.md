@@ -1,12 +1,14 @@
 # omega-gpu-driver
 
-The GB10 GPU driver written in seeded Omega. Status: **W0 IMPLEMENTED and EXERCISED in QEMU only.
-Not run on GB10 hardware; nothing here is QUALIFIED.**
+The GB10 GPU driver written in seeded Omega. Status: **W0 IMPLEMENTED and EXERCISED in QEMU. The driver
+units below are IMPLEMENTED and EXERCISED on the host against C referees and simulators only. Nothing has
+run on GB10 hardware; nothing here is QUALIFIED. GSP boot (`gb10_gsp_boot.c`) is not ported.**
 
 Parent: [aien-dev/omega-mv](https://github.com/aien-dev/omega-mv), the seeded Omega compiler. This repo
 pins one omega-mv commit and the sha256 of the `omc` it births (`tools/omc.pin`). The pin is currently
-the draft branch `feat/vfio-device-calls` (commit `7ae2aef9b`), which adds the `vfioctl` and `vfiomap`
-words this driver needs; it moves to omega-mv main after that PR is reviewed and merged.
+the draft branch `feat/vfio-dma-bar` (omega-mv#890, commit `397e6704`, on #878 `feat/vfio-device-calls`).
+It adds the `vfioctl` and `vfiomap` words plus IOMMU_MAP_DMA/UNMAP_DMA and the writable `vfiomapw` this
+driver needs. The pin moves to omega-mv main after those PRs are reviewed and merged.
 
 ## W0: bind, read identity, release
 
@@ -48,7 +50,7 @@ traps. See omega-mv `seed/host/MAPPING.md`.
 
 ## Build and test
 
-    sh build.sh          # births the pinned omc from seed-0, checks its sha256, writes build/w0
+    sh build.sh          # births the pinned omc from seed-0, checks its sha256, writes build/w0, build/fwprep
     KERNEL=img/boot/vmlinuz-7.0.0-1019-nvidia sh qemu/test.sh
                          # QEMU virt + SMMUv3, edu device on vfio-pci, 9 commands, all results checked
     KERNEL=... DEVICES='-device pcie-root-port,id=rp1,chassis=1,slot=1 -device edu,bus=rp1' \
@@ -61,15 +63,36 @@ transcript: edu reads `0x010000ed` at BAR0 0x0 through both the map and pread; w
 edu, a virtio device, an access at the BAR0 size and a misaligned access are all refused.
 `qemu/mutant-*.log` show two compiler mutants (MAP_PRIVATE, wrong device-fd request) failing there.
 
-Host tools in the build and test path (disclosed; not part of the driver): `sh`, `git`, `sha256sum`,
-QEMU 8.2.2, busybox, zstd, cpio, gzip. The driver itself is `w0.om` only.
+## Driver units (host-exercised ports of aienux PR #441 C)
 
-## On the GB10 (operator-run, authorized window only)
+Each unit is a `.om` port of one aienux reference file; each gate compares the `.om` output with the C
+reference byte for byte, and each mutant script changes one line at a time and requires the gate to fail.
 
-Main binds the GPU to `vfio-pci` (000f:01:00.0, IOMMU group 20, alone in its group) and runs:
+| Unit | Ported from | Gate | Mutants |
+|---|---|---|---|
+| `gsp/mmio.om`, `gsp/sim.om` (register-level GSP start-up via SEC2, runtime-PM gate, SEC2+GSP falcon simulator) | `gpu/gsp_mmio.c`, `gpu/gsp_sim.c` | `tests/mmio_diff.sh`, `tests/pm_gate.sh` | `tests/mutants-mmio.sh` |
+| `gsp/sysinfo.om` (GSP_SET_SYSTEM_INFO payload) | `tools/ck_gsp_sysinfo_encode.c` | `tests/sysinfo_diff.sh` | `tests/mutants-sysinfo.sh` |
+| `gsp/seq.om` (GSP_RUN_CPU_SEQUENCER, CPU side) | `gpu/gsp_seq.c` | `tests/seq_diff.sh` | `tests/mutants-seq.sh` |
+| `gsp/sha2.om`, `gsp/inflate.om`, `gsp/fw.om`, `gsp/bindata.om`, `fwprep.om` (firmware inputs) | `ck_gsp_fw_inspect.c`, `ck_gsp_bindata_extract.c`, `argus/sha256.c` | `tests/fw_diff.sh` | `tests/mutants-fw.sh` |
+| `chan/gmmu.om`, `chan/mem.om`, `chan/chan.om`, `chan/sim.om` (page tables, buffers, channels; simulator mode only) | `gpu/gmmu.c`, `gpu_mem.c`, `gpu_chan.c`, `gpu_sim.c` | `tests/chan_diff.sh` | `tests/mutants-chan.sh` |
+| `chan/params.om` (RM alloc/control records for GSP-RM, NVIDIA 580.173.02 layouts) | NVIDIA headers | `tests/params_diff.sh` | `tests/mutants-chan.sh` |
 
-    build/w0 000f:01:00.0 20
+`fwprep FWFILE OGKMSRC OUTDIR` reads the signed `gsp_ga10x.bin` (unchanged) and the NVIDIA open-source
+bindata tables, and writes `fmc.img`, `fmc.hash`, `fmc.pubkey`, `fmc.sig`, `bl.img` and, last,
+`fw.manifest`. Channel ops other than the simulator (mode 0) trap; on the GB10 they go through GSP RPC.
 
-Expected: config vendor/device 0x2e1210de (lspci reports [10de:2e12]) and matching map and pread
+Test-only referees and harnesses (disclosed; never linked into the driver): `tests/seq_ref.c` and
+`tests/params_ref.c` (C), the aienux C tools built fresh by the diff scripts, and the shell scripts in
+`tests/`. Host tools in the build and test path: `sh`, `git`, `sha256sum`, `cc`, QEMU 8.2.2, busybox,
+zstd, cpio, gzip.
+
+## On the GB10 (authorized exclusive window only)
+
+`window/README.md` is the procedure: W0 read-only checks, W1 reboot with nvidia.ko held back, W2 bind to
+`vfio-pci`, W3 `build/w0 000f:01:00.0 20`, W7 release, then R restores nvidia.ko and the resident 35B.
+`tests/window_sim.sh` runs those scripts unchanged against a simulated machine, and
+`tests/mutants-window.sh` checks that it catches each removed safety step. None of it has run on the GB10.
+
+Expected from W3: config vendor/device 0x2e1210de (lspci reports [10de:2e12]) and matching map and pread
 values. The BOOT_0 architecture field (bits 28:24) is defined at nv_ref.h:129-136 (GB100 0x1A, GB200
 0x1B); which value the GB10 reports is what this run measures, not something this repo asserts.

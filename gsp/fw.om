@@ -1,0 +1,749 @@
+note gsp/fw.om: GSP firmware container inspection in seeded Omega (OM-1). Ports the inspect path of
+note aienux PR #441 native/kernel/tools/ck_gsp_fw_inspect.c (in_bounds, inspect_buf, print_report,
+note cmd_inspect) for the fixed pins family gb10y and version 580.173.02. Library unit: no main.
+note Prefix fw. Needs gsp/sha2.om concatenated first. The file is read with pread from an open fd,
+note never mapped and never a device. Also holds the shared stdout writer (fwo*) that gsp/bindata.om
+note and fwprep.om print through, and the strerror texts the C prints.
+note Deviation (documented): the section string table is copied into a 16 MiB global; a larger one is
+note refused with reason 29 after the C's bounds check and before its NUL check. The C keeps the whole
+note file in memory; this port preads only the header, the section table, the string table, the
+note version and note bytes, and streams the three SHA-256 digests (same results).
+const FWOCAP ulong 65536
+const FWSTMX ulong 16777216
+const FWNONE ulong 999
+global fwob uchar 65536
+global fwon ulong 1
+global fwofd int 1
+global fwoerr ulong 1
+global fwsgb ulong 80
+global fwsgl ulong 80
+global fwok ulong 1
+global fwpath uchar 4096
+global fwpathn ulong 1
+global fwhd uchar 64
+global fwsh uchar 16384
+global fwst uchar 16777216
+global fwstn ulong 1
+global fwbuf uchar 128
+global fwshn ulong 1
+global fwnsec ulong 1
+global fwsn ulong 256
+global fwsty ulong 256
+global fwsof ulong 256
+global fwssz ulong 256
+global fwlen ulong 1
+global fwimx ulong 1
+global fwvx ulong 1
+global fwbx ulong 1
+global fwsx ulong 1
+global fwver uchar 64
+global fwvern ulong 1
+global fwbidh uchar 128
+global fwbidn ulong 1
+global fwhxf uchar 64
+global fwhxi uchar 64
+global fwhxs uchar 64
+note segment k of FWTXT is the text between the k-th and (k+1)-th '|' (segment 0 is empty).
+note 1..28 are the C refusal reasons in check order, 29 the deviation reason, 30.. report pieces,
+note 54.. strerror texts (glibc wording); 68..70 more strerror texts for fwprep's write paths.
+text FWTXT "|short header: file smaller than an ELF64 header|ELF magic missing|not ELF64 (EI_CLASS)|not little-endian (EI_DATA)|EI_VERSION is not 1|e_type is not ET_REL (the pinned container is a relocatable object)|e_machine is not RISC-V (243)|e_shentsize is not 64|e_shnum is 0: no section header table|e_shnum above this tool's limit (256)|e_shstrndx out of range|section header table outside the file|section string table outside the file or empty|section string table not NUL-terminated|section name index outside the string table|section bounds: offset+size outside the file|missing section .fwimage|.fwimage empty|missing section .fwversion|missing section .note.gnu.build-id|missing section: no signature section for this chip family|signature section empty|version section size not in 1..63|version string not NUL-terminated|version mismatch against the pinned driver version|build-id note too short|build-id note is not an NT_GNU_BUILD_ID note|build-id note descriptor size out of range|section string table above this port's 16 MiB buffer|file | bytes=| family=| expect_version=|section | type=| offset=| size=|(null)|fwversion |build_id |signature_section |sha256_file |sha256_fwimage |sha256_signature |RESULT OK|RESULT REFUSED |.fwimage|.fwversion|.note.gnu.build-id|.fwsignature_gb10y|580.173.02|gb10y|GNU|No such file or directory|Permission denied|Is a directory|File too large|Input/output error|Not a directory|Too many levels of symbolic links|File name too long|Unknown error |open |: |short read|Too many open files|Cannot allocate memory|File exists|No space left on device|Read-only file system|"
+text FWHEXD "0123456789abcdef"
+note build the segment table once
+fn fwsetup to void
+if eq get fwok 0 1
+ret
+end
+put fwok 0 1
+seg = ulong 0
+put fwsgb 0 0
+put fwsgl 0 0
+for i ulong len FWTXT
+c = get FWTXT i
+if eq c 124
+seg = add seg 1
+put fwsgb seg add i 1
+put fwsgl seg 0
+else
+put fwsgl seg add get fwsgl seg 1
+end
+end
+put fwon 0 0
+put fwofd 0 1
+put fwoerr 0 0
+end
+note ---- buffered writer: fwob[0..fwon) goes to fd fwofd; a failed write sets fwoerr 1 ----
+fn fwoflush to long
+n = get fwon 0
+p = ulong 0
+while lt p n bound 999999
+r = write get fwofd 0 fwob p sub n p
+if le r 0
+put fwoerr 0 1
+put fwon 0 0
+ret -5
+end
+p = add p ulong r
+end
+put fwon 0 0
+ret 0
+end
+fn fwoc c uchar to void
+if ge get fwon 0 FWOCAP
+z = fwoflush
+end
+n = get fwon 0
+put fwob n c
+put fwon 0 add n 1
+end
+note print segment k of FWTXT
+fn fwos k ulong to void
+b = get fwsgb k
+for i ulong get fwsgl k
+fwoc get FWTXT add b i
+end
+end
+note print v in decimal
+fn fwodec v ulong to void
+d = new uchar 24 0
+n = ulong 0
+x = v
+while lt n 24 bound 24
+put d n add uchar rem x 10 48
+n = add n 1
+x = div x 10
+if eq x 0
+break
+end
+end
+while gt n 0 bound 24
+n = sub n 1
+fwoc get d n
+end
+end
+note print v in lowercase hex without leading zeros (C %x)
+fn fwohex v ulong to void
+d = new uchar 24 0
+n = ulong 0
+x = v
+while lt n 24 bound 24
+put d n get FWHEXD rem x 16
+n = add n 1
+x = div x 16
+if eq x 0
+break
+end
+end
+while gt n 0 bound 24
+n = sub n 1
+fwoc get d n
+end
+end
+note print shhx[0..2n) (call shhex n first)
+fn fwohx n ulong to void
+for i ulong mul n 2
+fwoc get shhx i
+end
+end
+fn fwopath to void
+for i ulong get fwpathn 0
+fwoc get fwpath i
+end
+end
+note print the strerror text of errno e (positive)
+fn fwoerrno e ulong to void
+k = ulong 0
+if eq e 2
+k = 54
+end
+if eq e 13
+k = 55
+end
+if eq e 21
+k = 56
+end
+if eq e 27
+k = 57
+end
+if eq e 5
+k = 58
+end
+if eq e 20
+k = 59
+end
+if eq e 40
+k = 60
+end
+if eq e 36
+k = 61
+end
+if eq e 24
+k = 66
+end
+if eq e 12
+k = 67
+end
+if eq e 17
+k = 68
+end
+if eq e 28
+k = 69
+end
+if eq e 30
+k = 70
+end
+if eq k 0
+fwos 62
+fwodec e
+ret
+end
+fwos k
+end
+note ---- pread loops, one per destination global: 0, -errno, or -5 when the file ends early ----
+fn fwrdhd fd int off ulong n ulong to long
+q = ulong 0
+while lt q n bound 999999
+r = pread fd fwhd q sub n q long add off q
+if lt r 0
+ret r
+end
+if eq r 0
+ret -5
+end
+q = add q ulong r
+end
+ret 0
+end
+fn fwrdsh fd int off ulong n ulong to long
+q = ulong 0
+while lt q n bound 999999
+r = pread fd fwsh q sub n q long add off q
+if lt r 0
+ret r
+end
+if eq r 0
+ret -5
+end
+q = add q ulong r
+end
+ret 0
+end
+fn fwrdst fd int off ulong n ulong to long
+q = ulong 0
+while lt q n bound 999999
+r = pread fd fwst q sub n q long add off q
+if lt r 0
+ret r
+end
+if eq r 0
+ret -5
+end
+q = add q ulong r
+end
+ret 0
+end
+fn fwrdbf fd int off ulong n ulong to long
+q = ulong 0
+while lt q n bound 999999
+r = pread fd fwbuf q sub n q long add off q
+if lt r 0
+ret r
+end
+if eq r 0
+ret -5
+end
+q = add q ulong r
+end
+ret 0
+end
+note ---- little-endian readers (C rd16/rd32/rd64) over fwhd, fwsh, fwbuf ----
+fn fwh16 p ulong to ulong
+ret or ulong get fwhd p shl ulong get fwhd add p 1 8
+end
+fn fwh64 p ulong to ulong
+v = ulong 0
+for i ulong 8
+v = or v shl ulong get fwhd add p i mul i 8
+end
+ret v
+end
+fn fws32 p ulong to ulong
+v = ulong 0
+for i ulong 4
+v = or v shl ulong get fwsh add p i mul i 8
+end
+ret v
+end
+fn fws64 p ulong to ulong
+v = ulong 0
+for i ulong 8
+v = or v shl ulong get fwsh add p i mul i 8
+end
+ret v
+end
+fn fwb32 p ulong to ulong
+v = ulong 0
+for i ulong 4
+v = or v shl ulong get fwbuf add p i mul i 8
+end
+ret v
+end
+note C in_bounds: off + size <= len without overflow
+fn fwinb off ulong size ulong flen ulong to ulong
+if gt off flen
+ret 0
+end
+if le size sub flen off
+ret 1
+end
+ret 0
+end
+note does the NUL-terminated name at fwst[off] equal segment k?
+fn fwnmeq off ulong k ulong to ulong
+b = get fwsgb k
+l = get fwsgl k
+n = get fwstn 0
+for i ulong l
+p = add off i
+if ge p n
+ret 0
+end
+if ne get fwst p get FWTXT add b i
+ret 0
+end
+end
+p2 = add off l
+if ge p2 n
+ret 0
+end
+if ne get fwst p2 0
+ret 0
+end
+ret 1
+end
+note checks 1..12 (C inspect_buf lines 123-138): returns 0, a reason, or 1000 on an I/O error
+fn fwchk1 fd int flen ulong to ulong
+if lt flen 64
+ret 1
+end
+r = fwrdhd fd 0 64
+if ne r 0
+ret 1000
+end
+note magic 0x7f 'E' 'L' 'F' = 127 69 76 70
+m = ulong 0
+if ne get fwhd 0 127
+m = 1
+end
+if ne get fwhd 1 69
+m = 1
+end
+if ne get fwhd 2 76
+m = 1
+end
+if ne get fwhd 3 70
+m = 1
+end
+if eq m 1
+ret 2
+end
+if ne get fwhd 4 2
+ret 3
+end
+if ne get fwhd 5 1
+ret 4
+end
+if ne get fwhd 6 1
+ret 5
+end
+if ne fwh16 16 1
+ret 6
+end
+if ne fwh16 18 243
+ret 7
+end
+if ne fwh16 58 64
+ret 8
+end
+n = fwh16 60
+if eq n 0
+ret 9
+end
+if gt n 256
+ret 10
+end
+if ge fwh16 62 n
+ret 11
+end
+if eq fwinb fwh64 40 mul n 64 flen 0
+ret 12
+end
+put fwshn 0 n
+r = fwrdsh fd fwh64 40 mul n 64
+if ne r 0
+ret 1000
+end
+ret 0
+end
+note checks 13..16 (C lines 139-154): string table, then every section header in order
+fn fwchk2 fd int flen ulong to ulong
+si = mul fwh16 62 64
+so = fws64 add si 24
+ss = fws64 add si 32
+if eq ss 0
+ret 13
+end
+if eq fwinb so ss flen 0
+ret 13
+end
+if gt ss FWSTMX
+ret 29
+end
+r = fwrdst fd so ss
+if ne r 0
+ret 1000
+end
+if ne get fwst sub ss 1 0
+ret 14
+end
+put fwstn 0 ss
+ret fwsecs flen
+end
+note C lines 145-154: every section header in order; records each before checking the next
+fn fwsecs flen ulong to ulong
+for i ulong get fwshn 0
+b = mul i 64
+nm = fws32 b
+ty = fws32 add b 4
+of = fws64 add b 24
+sz = fws64 add b 32
+if ge nm get fwstn 0
+ret 15
+end
+if ne ty 8
+if gt sz 0
+if eq fwinb of sz flen 0
+ret 16
+end
+end
+end
+k = get fwnsec 0
+put fwsn k nm
+put fwsty k ty
+put fwsof k of
+put fwssz k sz
+put fwnsec 0 add k 1
+end
+ret 0
+end
+note checks 17..22 (C lines 155-168): the strcmp chain, last match wins
+fn fwchk3 to ulong
+put fwimx 0 FWNONE
+put fwvx 0 FWNONE
+put fwbx 0 FWNONE
+put fwsx 0 FWNONE
+for i ulong get fwnsec 0
+o = get fwsn i
+if eq fwnmeq o 47 1
+put fwimx 0 i
+else
+if eq fwnmeq o 48 1
+put fwvx 0 i
+else
+if eq fwnmeq o 49 1
+put fwbx 0 i
+else
+if eq fwnmeq o 50 1
+put fwsx 0 i
+end
+end
+end
+end
+end
+x = get fwimx 0
+if eq x FWNONE
+ret 17
+end
+if eq get fwsty x 8
+ret 18
+end
+if eq get fwssz x 0
+ret 18
+end
+if eq get fwvx 0 FWNONE
+ret 19
+end
+if eq get fwbx 0 FWNONE
+ret 20
+end
+x = get fwsx 0
+if eq x FWNONE
+ret 21
+end
+if eq get fwsty x 8
+ret 22
+end
+if eq get fwssz x 0
+ret 22
+end
+ret 0
+end
+note checks 23..25 (C lines 170-175): .fwversion size, NUL, equality with the pin "580.173.02"
+fn fwchk4 fd int to ulong
+x = get fwvx 0
+sz = get fwssz x
+if eq get fwsty x 8
+ret 23
+end
+if eq sz 0
+ret 23
+end
+if ge sz 64
+ret 23
+end
+r = fwrdbf fd get fwsof x sz
+if ne r 0
+ret 1000
+end
+if ne get fwbuf sub sz 1 0
+ret 24
+end
+n = ulong 0
+while lt n sz bound 64
+if eq get fwbuf n 0
+break
+end
+put fwver n get fwbuf n
+n = add n 1
+end
+put fwvern 0 n
+if ne sz add get fwsgl 51 1
+ret 25
+end
+b = get fwsgb 51
+for i ulong get fwsgl 51
+if ne get fwbuf i get FWTXT add b i
+ret 25
+end
+end
+ret 0
+end
+note checks 26..28 (C lines 177-185): the NT_GNU_BUILD_ID note, then its hex
+fn fwchk5 fd int to ulong
+x = get fwbx 0
+sz = get fwssz x
+if eq get fwsty x 8
+ret 26
+end
+if lt sz 16
+ret 26
+end
+n = sz
+if gt n 80
+n = 80
+end
+r = fwrdbf fd get fwsof x n
+if ne r 0
+ret 1000
+end
+m = ulong 0
+if ne fwb32 0 4
+m = 1
+end
+note "GNU\0" = 71 78 85 0
+if ne get fwbuf 12 71
+m = 1
+end
+if ne get fwbuf 13 78
+m = 1
+end
+if ne get fwbuf 14 85
+m = 1
+end
+if ne get fwbuf 15 0
+m = 1
+end
+if ne fwb32 8 3
+m = 1
+end
+if eq m 1
+ret 27
+end
+d = fwb32 4
+if eq d 0
+ret 28
+end
+if gt d 64
+ret 28
+end
+if gt add 16 d sz
+ret 28
+end
+fwbidhx d
+ret 0
+end
+note lowercase hex of the d note descriptor bytes fwbuf[16..16+d) into fwbidh (C hex)
+fn fwbidhx d ulong to void
+for i ulong d
+c = get fwbuf add 16 i
+put fwbidh mul i 2 get FWHEXD shr c 4
+put fwbidh add mul i 2 1 get FWHEXD and c 15
+end
+put fwbidn 0 mul d 2
+end
+note the three SHA-256 digests as lowercase hex in fwhxf / fwhxi / fwhxs; 0 or 1000 on an I/O error
+fn fwdig fd int flen ulong to ulong
+sh2init 0
+sh2init 1
+sh2init 2
+r = sh2file 0 fd 0 flen
+if ne r 0
+ret 1000
+end
+x = get fwimx 0
+r = sh2file 1 fd get fwsof x get fwssz x
+if ne r 0
+ret 1000
+end
+x = get fwsx 0
+r = sh2file 2 fd get fwsof x get fwssz x
+if ne r 0
+ret 1000
+end
+sh2fin 0
+shhex 32
+for i ulong 64
+put fwhxf i get shhx i
+end
+sh2fin 1
+shhex 32
+for i ulong 64
+put fwhxi i get shhx i
+end
+sh2fin 2
+shhex 32
+for i ulong 64
+put fwhxs i get shhx i
+end
+ret 0
+end
+note all checks in the C order: 0 = every check passed, 1..29 = refusal reason, 1000 = I/O error
+fn fwcheck fd int flen ulong to ulong
+put fwnsec 0 0
+put fwlen 0 flen
+e = fwchk1 fd flen
+if ne e 0
+ret e
+end
+e = fwchk2 fd flen
+if ne e 0
+ret e
+end
+e = fwchk3
+if ne e 0
+ret e
+end
+e = fwchk4 fd
+if ne e 0
+ret e
+end
+e = fwchk5 fd
+if ne e 0
+ret e
+end
+ret fwdig fd flen
+end
+note print the NUL-terminated name at fwst[off], or (null) when it is empty
+fn fwoname off ulong to void
+if eq get fwst off 0
+fwos 38
+ret
+end
+note the string table is NUL-terminated (check 14), so the name ends inside it; chunked for the
+note 999999 bound (a name may run up to 16 MiB)
+p = off
+go = ulong 1
+while eq go 1 bound 20
+while ne get fwst p 0 bound 999999
+fwoc get fwst p
+p = add p 1
+end
+if eq get fwst p 0
+go = 0
+end
+end
+end
+note C cmd_inspect + print_report for an open fd of flen bytes, path in fwpath[0..fwpathn).
+note Returns 0 = RESULT OK, 2 = RESULT REFUSED, 1 = I/O error (the C prints "short read" on
+note stderr and nothing on stdout; here the buffered file line is dropped and the caller reports).
+fn fwinsp fd int flen ulong to ulong
+fwsetup
+mk = get fwon 0
+fwos 30
+fwopath
+fwos 31
+fwodec flen
+fwos 32
+fwos 52
+fwos 33
+fwos 51
+fwoc 10
+e = fwcheck fd flen
+if eq e 1000
+put fwon 0 mk
+ret 1
+end
+for i ulong get fwnsec 0
+fwos 34
+fwodec i
+fwoc 32
+fwoname get fwsn i
+fwos 35
+fwodec get fwsty i
+fwos 36
+fwodec get fwsof i
+fwos 37
+fwodec get fwssz i
+fwoc 10
+end
+if ne e 0
+fwos 46
+fwos e
+fwoc 10
+ret 2
+end
+fwos 39
+for i ulong get fwvern 0
+fwoc get fwver i
+end
+fwoc 10
+fwos 40
+for i ulong get fwbidn 0
+fwoc get fwbidh i
+end
+fwoc 10
+fwos 41
+fwos 50
+fwos 37
+fwodec get fwssz get fwsx 0
+fwoc 10
+fwos 42
+for i ulong 64
+fwoc get fwhxf i
+end
+fwoc 10
+fwos 43
+for i ulong 64
+fwoc get fwhxi i
+end
+fwos 37
+fwodec get fwssz get fwimx 0
+fwoc 10
+fwos 44
+for i ulong 64
+fwoc get fwhxs i
+end
+fwoc 10
+fwos 45
+fwoc 10
+ret 0
+end

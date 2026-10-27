@@ -1,0 +1,507 @@
+note chan/gmmu.om: GB10 (Blackwell, ver3) GPU page tables and TLB invalidate, ported from aienux PR #441
+note native/kernel/gpu/gmmu.c and gmmu.h (branch pr441 @ c5bb3a4b). Library unit: no main. Prefix mm / MM.
+note Concatenate with chan/mem.om, chan/chan.om, chan/sim.om (the mode 0 device) before a test or driver.
+note
+note Window: the C takes any caller window (cpu pointer, pa_base, size). Omega cannot hand out a pointer,
+note so the window is the one global mmwin (8 MiB), at bus address mmwb with mmws bytes in use; mmwinit
+note sets them. The page-table pool, the buffers of chan/mem.om and the channel's rings all live inside it,
+note and chan/sim.om reads GPU-visible memory from the same array (in the C the simulator's mem is the
+note window too). On hardware the integrator DMA-maps mmwin and passes its IOVA as mmwb.
+note
+note Register seam (as gsp/mmio.om gsprd / gspwr): mmmode 0 = simulator (chan/sim.om gsrd / gswr),
+note mmmode 1 = 4-byte mapget / mapset on the vfiomapw BAR0 handle in mmbar, any other mode traps 9.
+note
+note API (state in globals; a global is never an argument):
+note   mmwinit base size -> long      window at bus address base, size bytes (1..8388608)
+note   mmasinit pool pages -> long    ck_gmmu_as_init: page-table pool of pages 4 KiB pages at pool
+note   mmmap va pa size page ap pcf   ck_gmmu_map; mmunmap va size page: ck_gmmu_unmap
+note   mminval budget -> long         ck_gmmu_invalidate (poll the trigger register budget times)
+note   mmptfree -> ulong              ck_gmmu_pt_free
+note   mmpde mmdualb mmduals mmpte    the entry encoders; mmlvidx lv va: ck_gmmu_index
+note   mmrd64 mmwr64 mmrd32 mmwr32 mmwr8 mmzero: little-endian window access by bus address
+note   globals out: mmroot (root page directory PA), mmdead (1 after an invalidate timeout),
+note   mmptpa / mmptus / mmptn (pool), mmleaf (last walk's leaf PA)
+note codes (enum ck_gmmu_status): 0 MMOK, 1 MMEINVAL, 2 MMEALIGN, 3 MMERANGE, 4 MMEBUSY, 5 MMENOMEM,
+note 6 MMENOENT, 7 MMETIME (ETIMEDOUT), 8 MMEDEAD
+note Bounds this port adds: mminval polls at most 1000000 times (trap 4 past that; the C takes any
+note uint32 budget); mmzero takes at most 1000000 bytes per call (trap 4).
+const MMOK long 0
+const MMEINVAL long 1
+const MMEALIGN long 2
+const MMERANGE long 3
+const MMEBUSY long 4
+const MMENOMEM long 5
+const MMENOENT long 6
+const MMETIME long 7
+const MMEDEAD long 8
+note walk results: free, mapped, missing (create 0), conflict
+const MMWFREE ulong 0
+const MMWMAP ulong 1
+const MMWMISS ulong 2
+const MMWCONF ulong 3
+note VA limit 1<<57, PA limit 1<<52, PDE/PTE address mask 0x000FFFFFFFFFF000,
+note dual-PDE big-table mask 0x000FFFFFFFFFFF00
+const MMVALIM ulong 144115188075855872
+const MMPALIM ulong 4503599627370496
+const MMADDR ulong 4503599627366400
+const MMBIGM ulong 4503599627370240
+const MMSZ4K ulong 4096
+const MMSZ64K ulong 65536
+const MMSZ2M ulong 2097152
+const MMPTB ulong 4096
+const MMMAXPT ulong 64
+note aperture 2 = system memory coherent (PDE and PTE); PDE PCF 2 = cached, no ATS
+const MMAPSYS ulong 2
+const MMPDEPCF ulong 2
+note GB10 virtual-function MMU invalidate registers: VF base 0xB80000, PDB 0xB830A0, UPPER_PDB 0xB830A4,
+note INVALIDATE 0xB830B0; trigger bit 31, ALL_VA bit 0, PDB aperture sysmem 2
+const MMRPDB ulong 12071072
+const MMRUPR ulong 12071076
+const MMRINV ulong 12071088
+const MMTRIG ulong 2147483648
+const MMALLVA ulong 1
+const MMPDBAP ulong 2
+const MMWINMAX ulong 8388608
+global mmwin uchar 8388608
+global mmwb ulong 1
+global mmws ulong 1
+global mmmode ulong 1
+global mmbar long 1
+global mmptpa ulong 64
+global mmptus uchar 64
+global mmptn ulong 1
+global mmroot ulong 1
+global mmdead ulong 1
+global mmleaf ulong 1
+global mmmiss ulong 1
+global mmnpa ulong 1
+global mmkey ulong 7
+global mmwres ulong 1
+fn mmregrd off ulong to ulong
+m = get mmmode 0
+if eq m 0
+ret gsrd off
+end
+if ne m 1
+trap 9
+end
+ret mapget get mmbar 0 off 4
+end
+fn mmregwr off ulong v ulong to void
+m = get mmmode 0
+if eq m 0
+gswr off v
+ret
+end
+if ne m 1
+trap 9
+end
+r = mapset get mmbar 0 off 4 v
+if ne r 0
+trap 9
+end
+end
+fn mmwinit base ulong size ulong to long
+if or eq size 0 gt size MMWINMAX
+ret MMEINVAL
+end
+if lt add base size base
+ret MMERANGE
+end
+put mmwb 0 base
+put mmws 0 size
+ret MMOK
+end
+fn mmrd64 pa ulong to ulong
+o = sub pa get mmwb 0
+v = ulong 0
+for i ulong 8
+v = or shl v 8 ulong get mmwin add o sub 7 i
+end
+ret v
+end
+fn mmwr64 pa ulong v ulong to void
+o = sub pa get mmwb 0
+for i ulong 8
+put mmwin add o i uchar and shr v mul i 8 255
+end
+end
+fn mmrd32 pa ulong to ulong
+o = sub pa get mmwb 0
+v = ulong 0
+for i ulong 4
+v = or shl v 8 ulong get mmwin add o sub 3 i
+end
+ret v
+end
+fn mmwr32 pa ulong v ulong to void
+o = sub pa get mmwb 0
+for i ulong 4
+put mmwin add o i uchar and shr v mul i 8 255
+end
+end
+fn mmwr8 pa ulong v uchar to void
+put mmwin sub pa get mmwb 0 v
+end
+fn mmzero pa ulong n ulong to void
+o = sub pa get mmwb 0
+for i ulong n
+put mmwin add o i 0
+end
+end
+note entry encoders (gmmu.c ck_gmmu_pde / ck_gmmu_dual_pde / ck_gmmu_pte)
+fn mmpde pa ulong ap ulong to ulong
+ret or or and pa MMADDR shl MMPDEPCF 3 shl and ap 3 1
+end
+note dual PDE word 0 (big-page table, 64 KiB pages); 0 when the half is absent
+fn mmdualb pa ulong ap ulong to ulong
+if eq ap 0
+ret 0
+end
+ret or or and pa MMBIGM shl MMPDEPCF 3 shl and ap 3 1
+end
+note dual PDE word 1 (small-page table, 4 KiB pages)
+fn mmduals pa ulong ap ulong to ulong
+if eq ap 0
+ret 0
+end
+ret or or and pa MMADDR shl MMPDEPCF 3 shl and ap 3 1
+end
+fn mmpte pa ulong ap ulong pcf ulong kind ulong to ulong
+v = or 1 shl and ap 3 1
+v = or v shl and pcf 31 3
+v = or v shl and kind 15 8
+ret or v and pa MMADDR
+end
+note level bit ranges: PDE4..PDE0 = 0..4, big PT = 5, small PT = 6
+fn mmlvlo lv ulong to ulong
+if eq lv 0
+ret 56
+end
+if eq lv 1
+ret 47
+end
+if eq lv 2
+ret 38
+end
+if eq lv 3
+ret 29
+end
+if eq lv 4
+ret 21
+end
+if eq lv 5
+ret 16
+end
+ret 12
+end
+fn mmlvhi lv ulong to ulong
+if eq lv 0
+ret 56
+end
+if eq lv 1
+ret 55
+end
+if eq lv 2
+ret 46
+end
+if eq lv 3
+ret 37
+end
+if eq lv 4
+ret 28
+end
+ret 20
+end
+fn mmlvidx lv ulong va ulong to ulong
+lo = mmlvlo lv
+b = add sub mmlvhi lv lo 1
+ret and shr va lo sub shl 1 b 1
+end
+fn mminwin pa ulong size ulong to bool
+b = get mmwb 0
+s = get mmws 0
+if or eq size 0 lt pa b
+ret false
+end
+o = sub pa b
+if gt o s
+ret false
+end
+ret le size sub s o
+end
+fn mmptalloc to long
+n = get mmptn 0
+for i ulong n
+if eq get mmptus i 0
+put mmptus i 1
+p = get mmptpa i
+mmzero p MMPTB
+put mmnpa 0 p
+ret MMOK
+end
+end
+ret MMENOMEM
+end
+fn mmptfree to ulong
+c = ulong 0
+for i ulong get mmptn 0
+if eq get mmptus i 0
+c = add c 1
+end
+end
+ret c
+end
+fn mmasinit pool ulong pages ulong to long
+if or or eq get mmws 0 0 or lt pages 2 gt pages MMMAXPT ne and pool 4095 0
+ret MMEINVAL
+end
+ok = mminwin pool mul pages MMPTB
+if not ok
+ret MMERANGE
+end
+put mmptn 0 pages
+put mmdead 0 0
+for i ulong MMMAXPT
+if lt i pages
+put mmptpa i add pool mul i MMPTB
+else
+put mmptpa i 0
+end
+put mmptus i 0
+end
+r = mmptalloc
+if eq r MMOK
+put mmroot 0 get mmnpa 0
+end
+ret r
+end
+note PDE4..PDE1: the PD0 table PA when mmwres is MMWFREE; otherwise mmwres is MMWCONF, or MMWMISS with
+note the first missing level in mmmiss
+fn mmwalkup va ulong create bool to ulong
+put mmwres 0 MMWFREE
+tbl = get mmroot 0
+for lv ulong 4
+ea = add tbl mul mmlvidx lv va 8
+v = mmrd64 ea
+if ne and v 1 0
+put mmwres 0 MMWCONF
+ret 0
+end
+if eq and shr v 1 3 0
+if not create
+put mmmiss 0 add lv 1
+put mmwres 0 MMWMISS
+ret 0
+end
+r = mmptalloc
+if ne r MMOK
+put mmwres 0 MMWCONF
+ret 0
+end
+mmwr64 ea mmpde get mmnpa 0 MMAPSYS
+v = mmrd64 ea
+end
+tbl = and v MMADDR
+end
+ret tbl
+end
+note walk(va, page, create): MMWFREE / MMWMAP with the leaf PA in mmleaf, MMWMISS with the first missing
+note level in mmmiss, MMWCONF
+fn mmwalk va ulong page ulong create bool to ulong
+tbl = mmwalkup va create
+if ne get mmwres 0 MMWFREE
+ret get mmwres 0
+end
+d = add tbl mul mmlvidx 4 va 16
+w0 = mmrd64 d
+w1 = mmrd64 add d 8
+bap = and shr w0 1 3
+sap = and shr w1 1 3
+if eq page MMSZ2M
+put mmleaf 0 d
+if ne and w0 1 0
+ret MMWMAP
+end
+if ne or bap sap 0
+ret MMWCONF
+end
+ret MMWFREE
+end
+if ne and w0 1 0
+ret MMWCONF
+end
+big = eq page MMSZ64K
+if big
+if ne sap 0
+ret MMWCONF
+end
+else
+if ne bap 0
+ret MMWCONF
+end
+end
+ret mmwalkpt d va big create
+end
+note walk, last stage: the big (64 KiB) or small (4 KiB) page table under the dual PDE0 at d
+fn mmwalkpt d ulong va ulong big bool create bool to ulong
+w0 = mmrd64 d
+w1 = mmrd64 add d 8
+ap = and shr w1 1 3
+lvl = ulong 6
+pt = and w1 MMADDR
+if big
+ap = and shr w0 1 3
+lvl = 5
+pt = and w0 MMBIGM
+end
+if eq ap 0
+if not create
+put mmmiss 0 lvl
+ret MMWMISS
+end
+r = mmptalloc
+if ne r MMOK
+ret MMWCONF
+end
+pt = get mmnpa 0
+if big
+mmwr64 add d 8 mmduals 0 0
+mmwr64 d mmdualb pt MMAPSYS
+else
+mmwr64 add d 8 mmduals pt MMAPSYS
+mmwr64 d mmdualb 0 0
+end
+end
+p = add pt mul mmlvidx lvl va 8
+put mmleaf 0 p
+if ne and mmrd64 p 1 0
+ret MMWMAP
+end
+ret MMWFREE
+end
+fn mmchk va ulong size ulong page ulong to long
+if ne get mmdead 0 0
+ret MMEDEAD
+end
+if and and ne page MMSZ4K ne page MMSZ64K ne page MMSZ2M
+ret MMEINVAL
+end
+if eq size 0
+ret MMEINVAL
+end
+if ne and or va size sub page 1 0
+ret MMEALIGN
+end
+if or ge va MMVALIM gt size sub MMVALIM va
+ret MMERANGE
+end
+ret MMOK
+end
+note dry run of map: page tables still needed, or 2^64-1 when a page is mapped or conflicts. The window
+note bounds a map to 2048 pages, so the loop bound is never reached.
+fn mmneed va ulong size ulong page ulong to ulong
+for j ulong 7
+put mmkey j 18446744073709551615
+end
+last = ulong 6
+if eq page MMSZ2M
+last = 4
+end
+if eq page MMSZ64K
+last = 5
+end
+need = ulong 0
+off = ulong 0
+while lt off size bound 999999
+w = mmwalk add va off page false
+if or eq w MMWMAP eq w MMWCONF
+ret 18446744073709551615
+end
+if eq w MMWMISS
+j = get mmmiss 0
+while le j last bound 8
+k = shr add va off add mmlvhi j 1
+if ne k get mmkey j
+put mmkey j k
+need = add need 1
+end
+if and eq j 4 eq last 6
+j = 5
+end
+j = add j 1
+end
+end
+off = add off page
+end
+ret need
+end
+fn mmmap va ulong pa ulong size ulong page ulong ap ulong pcf ulong to long
+rc = mmchk va size page
+if ne rc MMOK
+ret rc
+end
+if or gt ap 3 gt pcf 31
+ret MMEINVAL
+end
+if ne and pa sub page 1 0
+ret MMEALIGN
+end
+ok = mminwin pa size
+if or ge pa MMPALIM not ok
+ret MMERANGE
+end
+need = mmneed va size page
+if eq need 18446744073709551615
+ret MMEBUSY
+end
+if gt need mmptfree
+ret MMENOMEM
+end
+off = ulong 0
+while lt off size bound 999999
+w = mmwalk add va off page true
+if ne w MMWFREE
+ret MMEBUSY
+end
+mmwr64 get mmleaf 0 mmpte add pa off ap pcf 0
+off = add off page
+end
+ret MMOK
+end
+fn mmunmap va ulong size ulong page ulong to long
+rc = mmchk va size page
+if ne rc MMOK
+ret rc
+end
+off = ulong 0
+while lt off size bound 999999
+if ne mmwalk add va off page false MMWMAP
+ret MMENOENT
+end
+off = add off page
+end
+off = 0
+while lt off size bound 999999
+w = mmwalk add va off page false
+mmwr64 get mmleaf 0 0
+off = add off page
+end
+ret MMOK
+end
+fn mminval budget ulong to long
+if ne get mmdead 0 0
+ret MMEDEAD
+end
+pdb = shr get mmroot 0 12
+mmregwr MMRPDB or shl and pdb 268435455 4 MMPDBAP
+mmregwr MMRUPR and shr pdb 28 1048575
+mmregwr MMRINV or MMALLVA MMTRIG
+for i ulong budget
+if eq and mmregrd MMRINV MMTRIG 0
+ret MMOK
+end
+end
+put mmdead 0 1
+ret MMETIME
+end

@@ -1,0 +1,300 @@
+note chan/params.om: the RM-alloc and RM-control parameter records the W5 "hello" chain forwards
+note to GSP-RM (GSP_RM_ALLOC 103 / GSP_RM_CONTROL 76 carry them verbatim: rpcRmApiAlloc_GSP and
+note rpcRmApiControl_GSP memcpy the caller's params) plus the two page-directory RPC bodies.
+note Layout source of record: NVIDIA open-gpu-kernel-modules 580.173.02 (MIT), struct offsets and
+note sizes printed by tests/params_ref.c from offsetof/sizeof on the NVIDIA headers and compared
+note byte for byte by tests/params_diff.sh. Library unit, no main. Prefix pa.
+note Every encoder zeroes pabuf, writes one record little-endian, sets palen and returns its size,
+note or a negative error and leaves pabuf untouched: PAEFIT a value does not fit its field,
+note PAERANGE a value outside the field's legal set, PAELEN a reply of the wrong length.
+const PAOK long 0
+const PAEFIT long -1
+const PAERANGE long -2
+const PAELEN long -3
+note 0xFFFFFFFF
+const PAU32 ulong 4294967295
+note channel ids are 12 bits (0xFFF)
+const PACHMAX ulong 4095
+note RPC function numbers (nvidia/inc/kernel/vgpu/rpc_global_enums.h:64,86,89,113)
+const PARSETPD ulong 54
+const PARCTRL ulong 76
+const PARUNSPD ulong 79
+const PARALLOC ulong 103
+note classes: NV01_ROOT 0x0, NV01_DEVICE_0 0x80, NV20_SUBDEVICE_0 0x2080, FERMI_VASPACE_A 0x90f1,
+note KEPLER_CHANNEL_GROUP_A 0xa06c, FERMI_CONTEXT_SHARE_A 0x9067, BLACKWELL_CHANNEL_GPFIFO_A 0xc96f,
+note BLACKWELL_COMPUTE_B 0xcec0
+const PACROOT ulong 0
+const PACDEV ulong 128
+const PACSUB ulong 8320
+const PACVAS ulong 37105
+const PACTSG ulong 41068
+const PACCTX ulong 36967
+const PACGPF ulong 51567
+const PACCMP ulong 52928
+note controls: NVA06C_CTRL_CMD_GPFIFO_SCHEDULE 0xa06c0101 (ctrla06c.h:97),
+note NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO 0x20800a2a (ctrl2080internal.h:422)
+const PACMSCH ulong 2691432705
+const PACMGRI ulong 545262122
+note NV2080_ENGINE_TYPE_GRAPHICS 0x1, NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC 0x1
+const PAENGGR ulong 1
+const PACTXAS ulong 1
+note record sizes (sizeof on the 580.173.02 headers)
+const PASZROOT ulong 120
+const PASZDEV ulong 56
+const PASZSUB ulong 4
+const PASZVAS ulong 56
+const PASZTSG ulong 20
+const PASZCTX ulong 12
+const PASZCHAN ulong 368
+const PASZSCH ulong 3
+const PASZSPD ulong 48
+const PASZUPD ulong 16
+note GR info reply: 8 engines x 0x3a entries x 8 bytes = 3712; one engine is 58 x 8 = 464 bytes;
+note SM_VERSION is index 0xC, its data word at 12 x 8 + 4 = 100
+const PAGRSZ ulong 3712
+const PAGRENG ulong 464
+const PAGRMAX ulong 8
+const PASMOFF ulong 100
+note NVOS04 channel flags: clear USERD_INDEX_VALUE 10:8, USERD_INDEX_FIXED 11, USERD_INDEX_PAGE_VALUE
+note 20:12 and USERD_INDEX_PAGE_FIXED 21 (mask 0xFFC000FF), then set PAGE_FIXED (1 << 21)
+const PAFLMSK ulong 4290773247
+const PAPGFIX ulong 2097152
+text PANAME "aien-ogd"
+global pabuf uchar 4096
+global palen ulong 1
+global pain ulong 48
+global pareply uchar 4096
+fn paclr n ulong to void
+for i ulong 4096
+put pabuf i 0
+end
+put palen 0 n
+end
+fn paput32 o ulong v ulong to void
+for i ulong 4
+put pabuf add o i uchar and shr v mul i 8 255
+end
+end
+fn paput64 o ulong v ulong to void
+for i ulong 8
+put pabuf add o i uchar and shr v mul i 8 255
+end
+end
+fn paget32 o ulong to ulong
+v = ulong 0
+for i ulong 4
+v = or shl v 8 ulong get pareply add o sub 3 i
+end
+ret v
+end
+fn paf4 a ulong b ulong c ulong d ulong to bool
+ret and and le a PAU32 le b PAU32 and le c PAU32 le d PAU32
+end
+note NV0000_ALLOC_PARAMETERS: hClient 0, processID 4, processName[100] 8 ("aien-ogd", NUL padded),
+note pOsPidInfo 112 (0)
+fn paroot hcli ulong pid ulong to long
+if not paf4 hcli pid 0 0
+ret PAEFIT
+end
+paclr PASZROOT
+paput32 0 hcli
+paput32 4 pid
+for i ulong len PANAME
+put pabuf add 8 i get PANAME i
+end
+ret long PASZROOT
+end
+note NV0080_ALLOC_PARAMETERS: deviceId 0, hClientShare 4, hTargetClient 8 (0), hTargetDevice 12 (0),
+note flags 16, vaSpaceSize 24, vaStartInternal 32 (0), vaLimitInternal 40 (0), vaMode 48
+fn padevice devid ulong hshare ulong flags ulong vamode ulong vasize ulong to long
+if not paf4 devid hshare flags vamode
+ret PAEFIT
+end
+paclr PASZDEV
+paput32 0 devid
+paput32 4 hshare
+paput32 16 flags
+paput64 24 vasize
+paput32 48 vamode
+ret long PASZDEV
+end
+note NV2080_ALLOC_PARAMETERS: subDeviceId 0
+fn pasubdev subid ulong to long
+if gt subid PAU32
+ret PAEFIT
+end
+paclr PASZSUB
+paput32 0 subid
+ret long PASZSUB
+end
+note NV_VASPACE_ALLOCATION_PARAMETERS: index 0, flags 4, vaSize 8, vaStartInternal 16 (0),
+note vaLimitInternal 24 (0), bigPageSize 32, vaBase 40, pasid 48 (0)
+fn pavaspace index ulong flags ulong vasize ulong vabase ulong bigpg ulong to long
+if not paf4 index flags bigpg 0
+ret PAEFIT
+end
+paclr PASZVAS
+paput32 0 index
+paput32 4 flags
+paput64 8 vasize
+paput32 32 bigpg
+paput64 40 vabase
+ret long PASZVAS
+end
+note NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS: hObjectError 0, hObjectEccError 4, hVASpace 8,
+note engineType 12, bIsCallingContextVgpuPlugin 16 (NV_FALSE)
+fn patsg herr ulong hecc ulong hvas ulong eng ulong to long
+if not paf4 herr hecc hvas eng
+ret PAEFIT
+end
+paclr PASZTSG
+paput32 0 herr
+paput32 4 hecc
+paput32 8 hvas
+paput32 12 eng
+ret long PASZTSG
+end
+note NV_CTXSHARE_ALLOCATION_PARAMETERS: hVASpace 0, flags 4, subctxId 8
+fn pactxsh hvas ulong flags ulong subctx ulong to long
+if not paf4 hvas flags subctx 0
+ret PAEFIT
+end
+paclr PASZCTX
+paput32 0 hvas
+paput32 4 flags
+paput32 8 subctx
+ret long PASZCTX
+end
+note pain indices that hold NvU64 fields in the channel layout: gpFifoOffset 1, userdOffset[0] 7,
+note base/size of the six NV_MEMORY_DESC_PARAMS (16,17 20,21 24,25 28,29 32,33 38,39)
+fn pawide k ulong to bool
+if or eq k 1 eq k 7
+ret true
+end
+if and ge k 16 le k 35
+ret lt rem sub k 16 4 2
+end
+ret or eq k 38 eq k 39
+end
+note NV_MEMORY_DESC_PARAMS at o from pain[k..k+3]: base 0, size 8, addressSpace 16, cacheAttrib 20
+fn pamd o ulong k ulong to void
+paput64 o get pain k
+paput64 add o 8 get pain add k 1
+paput32 add o 16 get pain add k 2
+paput32 add o 20 get pain add k 3
+end
+note the GSP-client flag rewrite of kernel_channel.c:2814-2821: USERD_INDEX_FIXED false,
+note USERD_INDEX_PAGE_FIXED true, USERD_INDEX_VALUE = chid % 8, USERD_INDEX_PAGE_VALUE = chid / 8
+fn pachfl fl ulong chid ulong to ulong
+v = or and fl PAFLMSK PAPGFIX
+ret or v or shl rem chid 8 8 shl and div chid 8 511 12
+end
+note NV_CHANNEL_ALLOC_PARAMS (368 bytes) from pain:
+note 0 hObjectError, 1 gpFifoOffset, 2 gpFifoEntries, 3 client flags, 4 hContextShare, 5 hVASpace,
+note 6 hUserdMemory[0], 7 userdOffset[0], 8 engineType, 9 subDeviceId, 10 hObjectEccError,
+note 11 hPhysChannelGroup, 12 error notifier type, 13 ECC error notifier type, 14 privilege level,
+note 15 chid, 16-19 instanceMem, 20-23 userdMem, 24-27 ramfcMem, 28-31 mthdbufMem,
+note 32-35 errorNotifierMem, 36 ProcessID, 37 SubProcessID, 38-41 eccErrorNotifierMem.
+note hObjectBuffer, cid, hUserdMemory[1..7], userdOffset[1..7], the IVs, hmacNonce and tpcConfigID
+note are 0. internalFlags = PRIVILEGE 1:0 | ERROR_NOTIFIER_TYPE 3:2 | ECC_ERROR_NOTIFIER_TYPE 5:4.
+fn pachan to long
+for k ulong 42
+if and not pawide k gt get pain k PAU32
+ret PAEFIT
+end
+end
+if or or gt get pain 12 3 gt get pain 13 3 gt get pain 14 3
+ret PAERANGE
+end
+chid = get pain 15
+if gt chid PACHMAX
+ret PAERANGE
+end
+paclr PASZCHAN
+paput32 0 get pain 0
+paput64 8 get pain 1
+paput32 16 get pain 2
+paput32 20 pachfl get pain 3 chid
+paput32 24 get pain 4
+paput32 28 get pain 5
+paput32 32 get pain 6
+paput64 64 get pain 7
+paput32 128 get pain 8
+paput32 136 get pain 9
+paput32 140 get pain 10
+pamd 144 16
+pamd 168 20
+pamd 192 24
+pamd 216 28
+paput32 240 get pain 11
+paput32 244 or or get pain 14 shl get pain 12 2 shl get pain 13 4
+pamd 248 32
+pamd 272 38
+paput32 296 get pain 36
+paput32 300 get pain 37
+ret long PASZCHAN
+end
+note NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS: bEnable 0, bSkipSubmit 1, bSkipEnable 2 (NvBool each)
+fn pasched en ulong skipsub ulong skipen ulong to long
+if or or gt en 1 gt skipsub 1 gt skipen 1
+ret PAERANGE
+end
+paclr PASZSCH
+put pabuf 0 uchar en
+put pabuf 1 uchar skipsub
+put pabuf 2 uchar skipen
+ret long PASZSCH
+end
+note NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS request: all zero, GSP-RM fills the reply
+fn pagrinfo to long
+paclr PAGRSZ
+ret long PAGRSZ
+end
+note SM_VERSION of engine eng from a GR_GET_INFO reply of n bytes copied into pareply:
+note engineInfo[eng].infoList[0xC].data
+fn pasmver eng ulong n ulong to long
+if ne n PAGRSZ
+ret PAELEN
+end
+if ge eng PAGRMAX
+ret PAERANGE
+end
+ret long paget32 add mul eng PAGRENG PASMOFF
+end
+note rpc_set_page_directory_v1E_05 (48 bytes) from pain: 0 hClient 0, 1 hDevice 4, 2 pasid 8,
+note params at 16: 3 physAddress 16, 4 numEntries 24, flags 28 = 5 APERTURE 1:0 (0..2) |
+note 6 PRESERVE_PDES 2:2 (0..1), 7 hVASpace 32, 8 chId 36, 9 subDeviceId 40, 10 params.pasid 44
+fn pasetpd to long
+for k ulong 11
+if and ne k 3 gt get pain k PAU32
+ret PAEFIT
+end
+end
+if or gt get pain 5 2 gt get pain 6 1
+ret PAERANGE
+end
+paclr PASZSPD
+paput32 0 get pain 0
+paput32 4 get pain 1
+paput32 8 get pain 2
+paput64 16 get pain 3
+paput32 24 get pain 4
+paput32 28 or get pain 5 shl get pain 6 2
+paput32 32 get pain 7
+paput32 36 get pain 8
+paput32 40 get pain 9
+paput32 44 get pain 10
+ret long PASZSPD
+end
+note rpc_unset_page_directory_v1E_05: hClient 0, hDevice 4, params at 8: hVASpace 8, subDeviceId 12
+fn paunsetpd hcli ulong hdev ulong hvas ulong subdev ulong to long
+if not paf4 hcli hdev hvas subdev
+ret PAEFIT
+end
+paclr PASZUPD
+paput32 0 hcli
+paput32 4 hdev
+paput32 8 hvas
+paput32 12 subdev
+ret long PASZUPD
+end

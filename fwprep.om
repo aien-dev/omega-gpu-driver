@@ -1,0 +1,545 @@
+note fwprep.om: the GB10 firmware inputs for the bring-up chain, from files only (OM-1 seeded omc).
+note Usage: fwprep FWFILE OGKMSRC OUTDIR
+note   FWFILE  gsp_ga10x.bin (580.173.02), inspected as ck_gsp_fw_inspect inspect does
+note   OGKMSRC open-gpu-kernel-modules-580.173.02 tree; its two GB10B bindata files are read as
+note           ck_gsp_bindata_extract extract does (src/nvidia/generated/g_bindata_kgspGetBinArchive*)
+note   OUTDIR  gets fmc.img fmc.hash fmc.pubkey fmc.sig bl.img, then fw.manifest (written to
+note           fw.manifest.tmp and renamed; fw.manifest is unlinked first, so a refused or failed run
+note           never leaves a manifest behind; consumers read the outputs only through it)
+note stdout: the inspect report, the FMC extract report, the boot extract report (the C tools' exact
+note bytes, without --out), then "fwprep ..." lines. Exit 0 ok, 1 usage or FWFILE open/read error
+note (stderr), 2 refused, 3 output write failure.
+note Build: cat gsp/sha2.om gsp/inflate.om gsp/fw.om gsp/bindata.om fwprep.om | build/omc > fwprep
+note Prefix fwp. Host only: reads files, writes OUTDIR; no device.
+global fwpok ulong 1
+global fwpsgb ulong 80
+global fwpsgl ulong 80
+global fwpst uchar 128
+global fwpsrc uchar 4096
+global fwpsrcn ulong 1
+global fwpout uchar 4096
+global fwpoutn ulong 1
+global fwpp uchar 4096
+global fwppn ulong 1
+global fwprn uchar 8200
+global fwpoo ulong 5
+global fwpon ulong 5
+global fwpoh uchar 320
+global fwpdo ulong 1
+global fwpsz ulong 2
+global fwpsh uchar 128
+note FWPTXT segments: 1 "fwprep ", 2 usage, 3..5 bindata paths, 6..7 functions, 8..13 labels,
+note 14..20 output names, 21.. messages, 33.. manifest pieces, 43..63 the 21 RM_RISCV_UCODE_DESC
+note words in struct order (C riscv_desc), 64.. more pieces
+text FWPTXT "|fwprep |usage: fwprep FWFILE OGKMSRC OUTDIR|/src/nvidia/generated/|g_bindata_kgspGetBinArchiveGspRmFmcGfwProdSigned_GB10B.c|g_bindata_kgspGetBinArchiveGspRmBoot_GB10B.c|kgspGetBinArchiveGspRmFmcGfwProdSigned_GB10B|kgspGetBinArchiveGspRmBoot_GB10B|UCODE_IMAGE|UCODE_HASH|UCODE_PKEY|UCODE_SIG|UCODE_IMAGE_PROD|UCODE_DESC_PROD|fmc.img|fmc.hash|fmc.pubkey|fmc.sig|bl.img|fw.manifest|fw.manifest.tmp|REFUSED unexpected function | in |REFUSED missing label |wrote | bytes=| sha256=|RESULT OK|FAILED |makedir |write |rename |: |fwmanifest 1|fwversion |build_id |fw_file bytes=|fwimage offset=| size=|fwsignature .fwsignature_gb10y offset=|fmc_src |boot_src |bl_desc UCODE_DESC_PROD| version=| bootloader_off=| bootloader_size=| bl_param_off=| bl_param_size=| elf_off=| elf_size=| app_version=| manifest_off=| manifest_size=| mdata_off=| mdata_size=| mcode_off=| mcode_size=| monitor_enabled=| swbrom_code_off=| swbrom_code_size=| swbrom_data_off=| swbrom_data_size=| fb_reserved=| signed_as_code=|out |end|open |short read|REFUSED firmware|REFUSED bindata |"
+fn fwpsetup to void
+if eq get fwpok 0 1
+ret
+end
+put fwpok 0 1
+seg = ulong 0
+for i ulong len FWPTXT
+c = get FWPTXT i
+if eq c 124
+seg = add seg 1
+put fwpsgb seg add i 1
+put fwpsgl seg 0
+else
+put fwpsgl seg add get fwpsgl seg 1
+end
+end
+end
+fn fwpos k ulong to void
+b = get fwpsgb k
+for i ulong get fwpsgl k
+fwoc get FWPTXT add b i
+end
+end
+fn fwppath to void
+for i ulong get fwppn 0
+fwoc get fwpp i
+end
+end
+note fwpp = OUTDIR "/" segment k
+fn fwpmk k ulong to void
+n = get fwpoutn 0
+for i ulong n
+put fwpp i get fwpout i
+end
+put fwpp n 47
+n = add n 1
+b = get fwpsgb k
+for i ulong get fwpsgl k
+put fwpp n get FWPTXT add b i
+n = add n 1
+end
+put fwppn 0 n
+end
+note bdpath = OGKMSRC "/src/nvidia/generated/" segment k
+fn fwpbdp k ulong to void
+n = get fwpsrcn 0
+for i ulong n
+put bdpath i get fwpsrc i
+end
+for s ulong 2
+g = ulong 3
+if eq s 1
+g = k
+end
+b = get fwpsgb g
+for i ulong get fwpsgl g
+put bdpath n get FWPTXT add b i
+n = add n 1
+end
+end
+put bdpathn 0 n
+end
+note one line to stderr: segment k, then the path in fwpath (when wp 1), then ": " strerror e (e > 0)
+fn fwperr k ulong wp ulong e ulong to void
+z = fwoflush
+put fwofd 0 2
+fwpos k
+if eq wp 1
+fwopath
+end
+if gt e 0
+fwpos 32
+fwoerrno e
+end
+fwoc 10
+z = fwoflush
+put fwofd 0 1
+end
+note arguments into fwpath (FWFILE), fwpsrc, fwpout: 0, or 1 on a usage error
+fn fwpargs to ulong
+if ne argcnt 4
+ret 1
+end
+a = argread 1 fwpath 0 4096
+if lt a 1
+ret 1
+end
+put fwpathn 0 ulong a
+b = argread 2 fwpsrc 0 4000
+if lt b 1
+ret 1
+end
+put fwpsrcn 0 ulong b
+c = argread 3 fwpout 0 4000
+if lt c 1
+ret 1
+end
+put fwpoutn 0 ulong c
+ret 0
+end
+note C cmd_inspect on FWFILE: 0 OK, 2 refused, 1 open or read error (C stderr wording)
+fn fwpfw to ulong
+fd = fopen fwpath 0 get fwpathn 0 524288 0
+if lt fd 0
+fwperr 66 1 ulong neg fd
+ret 1
+end
+s = fstat int fd fwpst 0 128
+if lt s 0
+c = fclose int fd
+fwperr 66 1 ulong neg s
+ret 1
+end
+sz = ulong 0
+for i ulong 8
+sz = or sz shl ulong get fwpst add 48 i mul i 8
+end
+md = ulong 0
+for i ulong 4
+md = or md shl ulong get fwpst add 16 i mul i 8
+end
+note S_IFMT 0170000 = 61440, S_IFDIR 0040000 = 16384: a directory is "Is a directory" (21)
+if eq and md 61440 16384
+c = fclose int fd
+fwperr 66 1 21
+ret 1
+end
+e = fwinsp int fd sz
+c = fclose int fd
+if eq e 1
+fwperr 67 0 0
+ret 1
+end
+ret e
+end
+note does the label of block i equal FWPTXT segment k?
+fn fwpleq i ulong k ulong to ulong
+b = get fwpsgb k
+l = get fwpsgl k
+if ne get bdlbl i l
+ret 0
+end
+a = mul i 64
+m = ulong 1
+for j ulong l
+if ne get bdlb add a j get FWPTXT add b j
+m = 0
+end
+end
+ret m
+end
+note block whose label equals FWPTXT segment k, or BDNONE
+fn fwpfind k ulong to ulong
+for i ulong get bdn 0
+if eq fwpleq i k 1
+ret i
+end
+end
+ret BDNONE
+end
+note "fwprep REFUSED missing label L in FILE"
+fn fwpmiss k ulong f ulong to ulong
+fwpos 1
+fwpos 23
+fwpos k
+fwpos 22
+fwpos f
+fwoc 10
+ret 2
+end
+note record block for label segment k as output slot o; 2 (refused) when it is missing
+fn fwpslot k ulong f ulong o ulong to ulong
+i = fwpfind k
+if eq i BDNONE
+ret fwpmiss k f
+end
+put fwpoo o get bdpo i
+put fwpon o get bdpn i
+ret 0
+end
+note extract bindata file f (segment 4 FMC or 5 boot) whose function must be segment fn
+fn fwpbd f ulong fs ulong w ulong to ulong
+fwpbdp f
+e = bdfile
+put fwpsz w get bdfsz 0
+for i ulong 64
+put fwpsh add mul w 64 i get bdfsh i
+end
+if ne e 0
+fwpos 1
+fwpos 69
+fwpos f
+fwoc 10
+ret 2
+end
+b = get fwpsgb fs
+l = get fwpsgl fs
+m = ulong 1
+if ne get bdfnl 0 l
+m = 0
+else
+for j ulong l
+if ne get bdfn j get FWPTXT add b j
+m = 0
+end
+end
+end
+if eq m 0
+fwpos 1
+fwpos 21
+bdofn 0
+fwpos 22
+fwpos f
+fwoc 10
+ret 2
+end
+ret 0
+end
+fn fwpfmc to ulong
+e = fwpbd 4 6 0
+if ne e 0
+ret e
+end
+e = fwpslot 8 4 0
+if ne e 0
+ret e
+end
+e = fwpslot 9 4 1
+if ne e 0
+ret e
+end
+e = fwpslot 10 4 2
+if ne e 0
+ret e
+end
+ret fwpslot 11 4 3
+end
+fn fwpboot to ulong
+e = fwpbd 5 7 1
+if ne e 0
+ret e
+end
+e = fwpslot 12 5 4
+if ne e 0
+ret e
+end
+i = fwpfind 13
+if eq i BDNONE
+ret fwpmiss 13 5
+end
+put fwpdo 0 get bdpo i
+ret 0
+end
+note "fwprep FAILED <what> <path in fwpp>: <strerror e>" on stdout
+fn fwpfail k ulong e ulong to ulong
+fwpos 1
+fwpos 28
+fwpos k
+fwppath
+fwpos 32
+fwoerrno e
+fwoc 10
+ret 3
+end
+note write bdpl[o..o+n) to OUTDIR/segment k: 0 or a positive errno (5 for a zero-byte write)
+fn fwpwf k ulong o ulong n ulong to ulong
+fwpmk k
+fd = fopen fwpp 0 get fwppn 0 524865 420
+if lt fd 0
+ret ulong neg fd
+end
+q = ulong 0
+while lt q n bound 999999
+r = write int fd bdpl add o q sub n q
+if lt r 1
+c = fclose int fd
+if lt r 0
+ret ulong neg r
+end
+ret 5
+end
+q = add q ulong r
+end
+c = fclose int fd
+if lt c 0
+ret ulong neg c
+end
+ret 0
+end
+note write output slot o as segment k and print its line; 0 or 3
+fn fwpput o ulong k ulong to ulong
+e = fwpwf k get fwpoo o get fwpon o
+if ne e 0
+ret fwpfail 30 e
+end
+bdsh256 get fwpoo o get fwpon o
+shhex 32
+for i ulong 64
+put fwpoh add mul o 64 i get shhx i
+end
+fwpos 1
+fwpos 24
+fwpos k
+fwpos 25
+fwodec get fwpon o
+fwpos 26
+fwohx 32
+fwoc 10
+ret 0
+end
+fn fwpohx o ulong to void
+for i ulong 64
+fwoc get fwpoh add mul o 64 i
+end
+end
+note little-endian u32 word w of the boot UCODE_DESC_PROD plain bytes
+fn fwpw32 w ulong to ulong
+p = add get fwpdo 0 mul w 4
+v = ulong 0
+for k ulong 4
+v = or v shl ulong get bdpl add p k mul k 8
+end
+ret v
+end
+note manifest lines 1..6: the firmware and the two bindata inputs
+fn fwpman1 to void
+fwpos 33
+fwoc 10
+fwpos 34
+for i ulong get fwvern 0
+fwoc get fwver i
+end
+fwoc 10
+fwpos 35
+for i ulong get fwbidn 0
+fwoc get fwbidh i
+end
+fwoc 10
+fwpos 36
+fwodec get fwlen 0
+fwpos 26
+for i ulong 64
+fwoc get fwhxf i
+end
+fwoc 10
+fwpos 37
+fwodec get fwsof get fwimx 0
+fwpos 38
+fwodec get fwssz get fwimx 0
+fwpos 26
+for i ulong 64
+fwoc get fwhxi i
+end
+fwoc 10
+fwpos 39
+fwodec get fwsof get fwsx 0
+fwpos 38
+fwodec get fwssz get fwsx 0
+fwpos 26
+for i ulong 64
+fwoc get fwhxs i
+end
+fwoc 10
+for w ulong 2
+fwpos add 40 w
+fwpos add 4 w
+fwpos 25
+fwodec get fwpsz w
+fwpos 26
+for i ulong 64
+fwoc get fwpsh add mul w 64 i
+end
+fwoc 10
+end
+end
+note manifest: the descriptor words, the outputs, "end"
+fn fwpman2 to void
+fwpos 42
+for w ulong 21
+fwpos add 43 w
+fwodec fwpw32 w
+end
+fwoc 10
+for o ulong 5
+fwpos 64
+fwpos add 14 o
+fwpos 25
+fwodec get fwpon o
+fwpos 26
+fwpohx o
+fwoc 10
+end
+fwpos 65
+fwoc 10
+end
+note write fw.manifest.tmp through the fw.om writer, then rename it to fw.manifest; 0 or 3
+fn fwpman to ulong
+z = fwoflush
+oe = get fwoerr 0
+fwpmk 20
+fd = fopen fwpp 0 get fwppn 0 524865 420
+if lt fd 0
+ret fwpfail 30 ulong neg fd
+end
+put fwofd 0 int fd
+put fwoerr 0 0
+fwpman1
+fwpman2
+z = fwoflush
+we = get fwoerr 0
+put fwofd 0 1
+put fwoerr 0 oe
+c = fclose int fd
+if eq we 1
+ret fwpfail 30 5
+end
+if lt c 0
+ret fwpfail 30 ulong neg c
+end
+ret fwpren
+end
+note rename fw.manifest.tmp to fw.manifest (renameat2 packed list: u16 count, then u16 len + bytes)
+fn fwpren to ulong
+put fwprn 0 2
+put fwprn 1 0
+n = ulong 2
+for s ulong 2
+fwpmk sub 20 s
+l = get fwppn 0
+put fwprn n uchar rem l 256
+put fwprn add n 1 uchar div l 256
+n = add n 2
+for i ulong l
+put fwprn add n i get fwpp i
+end
+n = add n l
+end
+r = renames fwprn 0 n 0
+if lt r 0
+ret fwpfail 31 ulong neg r
+end
+fwpos 1
+fwpos 24
+fwpos 19
+fwoc 10
+ret 0
+end
+note make OUTDIR (an existing one is fine) and write every output, the manifest last
+fn fwpwrite to ulong
+r = makedir fwpout 0 get fwpoutn 0 493
+if lt r 0
+if ne r -17
+for i ulong get fwpoutn 0
+put fwpp i get fwpout i
+end
+put fwppn 0 get fwpoutn 0
+ret fwpfail 29 ulong neg r
+end
+end
+for o ulong 5
+e = fwpput o add 14 o
+if ne e 0
+ret e
+end
+end
+ret fwpman
+end
+fn fwprun to ulong
+e = fwpfw
+if eq e 2
+fwpos 1
+fwpos 68
+fwoc 10
+end
+if ne e 0
+ret e
+end
+e = fwpfmc
+if ne e 0
+ret e
+end
+e = fwpboot
+if ne e 0
+ret e
+end
+e = fwpwrite
+if ne e 0
+ret e
+end
+fwpos 1
+fwpos 27
+fwoc 10
+ret 0
+end
+fn main to int
+fwsetup
+bdsetup
+fwpsetup
+if ne fwpargs 0
+fwperr 2 0 0
+ret 1
+end
+fwpmk 19
+u = unlink fwpp 0 get fwppn 0
+e = fwprun
+z = fwoflush
+if and eq e 0 eq get fwoerr 0 1
+ret 3
+end
+ret int e
+end

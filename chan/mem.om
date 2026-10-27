@@ -1,0 +1,228 @@
+note chan/mem.om: GPU buffer allocator over chan/gmmu.om, ported from aienux PR #441
+note native/kernel/gpu/gpu_mem.c and gpu_mem.h (branch pr441 @ c5bb3a4b). Library unit: no main.
+note Prefix gm / GM. Needs chan/gmmu.om before it.
+note
+note A buffer is a slot index 0..63 (the C hands out struct pointers into the same 64-slot table);
+note GMNONE (64) is "no buffer". Any index past 63 is a foreign pointer and is refused like one.
+note The allocator serves the address space of chan/gmmu.om (one per program; the C takes it as an arg).
+note
+note API (state in globals; a global is never an argument):
+note   gminit poll pab pages vab -> long   ck_gmem_init: pages 4 KiB pages at bus address pab (inside the
+note                                         window, clear of the page-table pool), mapped at GPU VA vab
+note   gmalloc size cache flags -> long    ck_gmem_alloc; the new slot in gmout (GMNONE on refusal)
+note   gmfree b / gmquar b -> long          ck_gmem_free / ck_gmem_quarantine
+note   gmcount st -> ulong                  ck_gmem_count (pages in state st)
+note   gmlive b -> bool                     slot b is a buffer in state LIVE
+note   per slot: gmbpa (bus address; the CPU view is mmwin at gmbpa - mmwb), gmbva (GPU VA), gmbsz,
+note   gmbca, gmbfl, gmbst, gmbgen (uint, wraps as the C uint32)
+note codes (enum ck_gmem_status): 0 GMOK, 1 GMEINVAL, 2 GMENOMEM, 3 GMESTATE, 4 GMEMAP, 5 GMETIME
+note cache: 0 cached, 1 uncached; flags: 1 host polled (needs uncached), 2 GPU read-only
+note states: 0 free, 1 live, 2 quarantined (never handed out again)
+const GMOK long 0
+const GMEINVAL long 1
+const GMENOMEM long 2
+const GMESTATE long 3
+const GMEMAP long 4
+const GMETIME long 5
+const GMFREE uchar 0
+const GMLIVE uchar 1
+const GMQUAR uchar 2
+const GMHPOLL ulong 1
+const GMGPURO ulong 2
+const GMMAXB ulong 64
+const GMMAXP ulong 1024
+const GMNONE ulong 64
+global gmpoll ulong 1
+global gmpab ulong 1
+global gmvab ulong 1
+global gmpages ulong 1
+global gmpgst uchar 1024
+global gmbpa ulong 64
+global gmbva ulong 64
+global gmbsz ulong 64
+global gmbca ulong 64
+global gmbfl ulong 64
+global gmbst uchar 64
+global gmbgen uint 64
+global gmout ulong 1
+fn gminit poll ulong pab ulong pages ulong vab ulong to long
+if or eq get mmptn 0 0 eq get mmws 0 0
+ret GMEINVAL
+end
+if or or or eq pages 0 gt pages GMMAXP ne and pab 4095 0 ne and vab sub MMSZ2M 1 0
+ret GMEINVAL
+end
+if eq poll 0
+ret GMEINVAL
+end
+if ne gmrange pab mul pages 4096 vab GMOK
+ret GMEINVAL
+end
+put gmpoll 0 poll
+put gmpab 0 pab
+put gmvab 0 vab
+put gmpages 0 pages
+for i ulong GMMAXP
+put gmpgst i GMFREE
+end
+for i ulong GMMAXB
+put gmbst i GMFREE
+put gmbgen i 0
+end
+ret GMOK
+end
+note gminit's range checks: n bytes at pab inside the window, at vab inside the 57-bit VA space, and
+note clear of every page-table page
+fn gmrange pab ulong n ulong vab ulong to long
+b = get mmwb 0
+s = get mmws 0
+if or or lt pab b gt sub pab b s gt n sub s sub pab b
+ret GMEINVAL
+end
+if or ge vab MMVALIM gt n sub MMVALIM vab
+ret GMEINVAL
+end
+ret gmptclr pab n
+end
+fn gmptclr pab ulong n ulong to long
+for i ulong get mmptn 0
+p = get mmptpa i
+if and gt add p MMPTB pab lt p add pab n
+ret GMEINVAL
+end
+end
+ret GMOK
+end
+fn gmlive b ulong to bool
+if ge b GMMAXB
+ret false
+end
+ret eq get gmbst b GMLIVE
+end
+fn gmsetpg b ulong st uchar to void
+first = div sub get gmbpa b get gmpab 0 4096
+n = div get gmbsz b 4096
+for i ulong n
+put gmpgst add first i st
+end
+end
+fn gmalloc size ulong cache ulong flags ulong to long
+note flags & ~3 != 0 is flags > 3 for an unsigned value
+if or or or eq size 0 gt size mul GMMAXP 4096 gt cache 1 gt flags 3
+ret GMEINVAL
+end
+if and ne and flags GMHPOLL 0 ne cache 1
+ret GMEINVAL
+end
+put gmout 0 GMNONE
+n = div add size 4095 4096
+b = gmslot
+if eq b GMNONE
+ret GMENOMEM
+end
+st = gmfit n
+if eq st GMMAXP
+ret GMENOMEM
+end
+ret gmplace b st n cache flags
+end
+note first free buffer slot, GMNONE when all 64 are taken
+fn gmslot to ulong
+for i ulong GMMAXB
+if eq get gmbst i GMFREE
+ret i
+end
+end
+ret GMNONE
+end
+note first fit: the first page of the first run of n FREE pages, GMMAXP when there is none
+fn gmfit n ulong to ulong
+run = ulong 0
+st = ulong 0
+for i ulong get gmpages 0
+if ne get gmpgst i GMFREE
+run = 0
+continue
+end
+if eq run 0
+st = i
+end
+run = add run 1
+if eq run n
+ret st
+end
+end
+ret GMMAXP
+end
+note map n pages from page st into slot b (the slot stays FREE, so its fields stay unused, until the
+note map succeeds)
+fn gmplace b ulong st ulong n ulong cache ulong flags ulong to long
+put gmbpa b add get gmpab 0 mul st 4096
+put gmbva b add get gmvab 0 mul st 4096
+put gmbsz b mul n 4096
+pcf = gmpcf cache flags
+r = mmmap get gmbva b get gmbpa b get gmbsz b MMSZ4K MMAPSYS pcf
+if ne r MMOK
+ret GMEMAP
+end
+put gmbca b cache
+put gmbfl b flags
+put gmbst b GMLIVE
+put gmbgen b add get gmbgen b 1
+gmsetpg b GMLIVE
+put gmout 0 b
+ret GMOK
+end
+note PTE PCF: uncached 1 (GPU read-only 5), cached 0 (GPU read-only 4)
+fn gmpcf cache ulong flags ulong to ulong
+ro = ne and flags GMGPURO 0
+if eq cache 1
+if ro
+ret 5
+end
+ret 1
+end
+if ro
+ret 4
+end
+ret 0
+end
+fn gmretire b ulong reuse bool to long
+if not gmlive b
+ret GMESTATE
+end
+um = mmunmap get gmbva b get gmbsz b MMSZ4K
+iv = um
+if eq um MMOK
+iv = mminval get gmpoll 0
+end
+if and reuse eq iv MMOK
+gmsetpg b GMFREE
+put gmbst b GMFREE
+ret GMOK
+end
+gmsetpg b GMQUAR
+put gmbst b GMFREE
+if not reuse
+ret GMOK
+end
+if or eq iv MMETIME eq iv MMEDEAD
+ret GMETIME
+end
+ret GMEMAP
+end
+fn gmfree b ulong to long
+ret gmretire b true
+end
+fn gmquar b ulong to long
+ret gmretire b false
+end
+fn gmcount st uchar to ulong
+c = ulong 0
+for i ulong get gmpages 0
+if eq get gmpgst i st
+c = add c 1
+end
+end
+ret c
+end

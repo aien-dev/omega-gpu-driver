@@ -1,0 +1,288 @@
+note gsp/mmio.om: the register-level GSP start-up on GB10B in seeded Omega, a port of
+note aien-dev/aienux PR #441 native/kernel/gpu/gsp_mmio.{h,c} (ck_gsp_mmio_boot, ck_gsp_mmio_notify).
+note GB10B has no FSP: SEC2 boots the GSP-FMC (open-gpu-kernel-modules 580.173.02, kgspBootstrap_GH100,
+note kernel_gsp_gh100.c:833-995, SEC2 branch :868-872). The eleven steps:
+note  1 wait until SEC2 EMEM channel 0 is empty, QUEUE_HEAD(0) == QUEUE_TAIL(0), HEAD read first
+note    (ksec2CanSendPacket_GB10B kernel_sec2_gb10b.c:343-357, _ksec2GetQueueHeadTail_GB10B :103-104)
+note  2 EMEMC(0) = offset 0 with auto-increment on write (AINCW bit 24) (:118-154, :723)
+note  3 EMEMD(0) = the packet one dword at a time, a short tail zero-padded (:166-213)
+note  4 EMEMC(0) read back: the write pointer moved by exactly the dwords written (:204-210)
+note  5 QUEUE_TAIL(0) = padded size - 4, THEN QUEUE_HEAD(0) = 0, which interrupts SEC2 (:72-84, :730)
+note  6 wait until SEC2 MAILBOX0 no longer reads 0xc001cafe (:285-311, :640)
+note  7 wait until GSP HWCFG2 is non-zero and not 0xBADF41xx (target mask released) (:264-283, :367-379)
+note  8 wait until HWCFG2 bit 13 (RISCV_BR_PRIV_LOCKDOWN) is clear or GSP MAILBOX0 is non-zero; MAILBOX0:1
+note    equal to the FMC boot-argument address means not read yet (kernel_gsp_gh100.c:492-533)
+note  9 GSP MAILBOX0 non-zero after that is an FMC error code (:940-946)
+note 10 GSP FALCON_OS = GspRmBoot appVersion (:954-956)
+note 11 RISC-V CPUCTL bit 7 ACTIVE_STAT must read ACTIVE (kernel_falcon_ga102.c:47-55)
+note Notify (kgspSetCmdQueueHead_TU102, kernel_gsp_tu102.c:343-355): GSP QUEUE_HEAD(0) = 0.
+note Library unit: no main. Build after it gsp/sim.om (the mode 0 device) and a driver with main.
+note Register seam: every device access is gsprd / gspwr. gspmode 0 = the in-.om simulator (simrd/simwr),
+note gspmode 1 = BAR0 through a vfiomapw handle in gspbar (mapget/mapset, 4 bytes). Mode 1 runs only in a
+note hardware window; host tests never set it. Nothing here has run on the chip.
+note BAR0 offsets, GB10B (dev_sec_pri.h:27-56, dev_gsp.h:27, dev_falcon_v4.h, dev_riscv_pri.h:58,68),
+note written in decimal because OM-1 has no hex literal: 0x840040 0x840044 0x840ac0 0x840ac4 0x840c00
+note 0x840c04 0x110040 0x110044 0x110080 0x1100f4 0x110c00 0x111388.
+const S2MB0 ulong 8650816
+const S2MB1 ulong 8650820
+const S2EMC ulong 8653504
+const S2EMD ulong 8653508
+const S2QH ulong 8653824
+const S2QT ulong 8653828
+const GMB0 ulong 1114176
+const GMB1 ulong 1114180
+const GOS ulong 1114240
+const GHWCFG2 ulong 1114356
+const GQH ulong 1117184
+const GCPUCTL ulong 1119112
+note EMEMC AINCW 1<<24; 64 dwords per EMEM block; channel 1024 bytes; SEC2 busy 0xc001cafe;
+note target locked 0xBADF4100 under mask 0xFFFFFF00; HWCFG2 lockdown 1<<13; CPUCTL active 1<<7.
+const AINCW ulong 16777216
+const DWBLK ulong 64
+const CHBYTES ulong 1024
+const CMDBUSY ulong 3221342974
+const PRIVLCK ulong 3135193344
+const PRIVMSK ulong 4294967040
+const LOCKDN ulong 8192
+const CPUACT ulong 128
+const M32 ulong 4294967295
+note stage codes (enum ck_gsp_mmio_err)
+const EOK long 0
+const EARG long -1
+const EBUSY long -2
+const EEMEM long -3
+const ESEC2 long -4
+const EMASK long -5
+const ELOCK long -6
+const EFMC long -7
+const ERISCV long -8
+note -9: the device is not runtime-active (arm64: a BAR read of a D3 device is an external abort);
+note checked before the first register access, so a refused start makes no access at all
+const EPM long -9
+note runtime PM: mode 0 asks the simulator (spm 0 = active); mode 1 reads the sysfs file whose path
+note the caller puts in gpmp[0..gpmn) (.../power/runtime_status) and requires exactly "active\n"
+text pmact "active\n"
+global gpmp uchar 128
+global gpmn ulong 1
+global gpmb uchar 16
+note seam state: mode, BAR0 handle (mode 1), pause between polls in nanoseconds (mode 1)
+global gspmode ulong 1
+global gspbar long 1
+global gsppns long 1
+note input (struct ck_gsp_mmio_in): the packet bytes, then gin 0 len, 1 fmc_args_pa, 2 app_version,
+note 3..6 poll budgets of steps 1, 6, 7, 8 (0 = check once)
+global gpkt uchar 1024
+global gin ulong 7
+note output (struct ck_gsp_mmio_out): gstage, then gout 0..3 polls of steps 1, 6, 7, 8, 4 dwords,
+note 5 ememc_after, 6 sec2_mb0, 7 sec2_mb1, 8 hwcfg2, 9 gsp_mb0, 10 gsp_mb1, 11 cpuctl
+global gstage long 1
+global gout ulong 12
+fn gsprd off ulong to ulong
+m = get gspmode 0
+if eq m 0
+ret simrd off
+end
+if ne m 1
+trap 9
+end
+ret mapget get gspbar 0 off 4
+end
+fn gspwr off ulong v ulong to void
+m = get gspmode 0
+if eq m 0
+simwr off v
+ret
+end
+if ne m 1
+trap 9
+end
+r = mapset get gspbar 0 off 4 v
+if ne r 0
+trap 9
+end
+end
+fn gsppause to void
+if eq get gspmode 0 1
+r = sleepns get gsppns 0
+end
+end
+fn ememdw c ulong to ulong
+ret add mul and shr c 8 255 DWBLK and shr c 2 63
+end
+fn maskrel h ulong to bool
+if eq h 0
+ret false
+end
+ret ne and h PRIVMSK PRIVLCK
+end
+fn gsppm to bool
+if eq get gspmode 0 0
+ret simpmok
+end
+fd = fopen gpmp 0 get gpmn 0 524288 0
+if lt fd 0
+ret false
+end
+n = read int fd gpmb ulong 0 16
+r = fclose int fd
+if ne n long len pmact
+ret false
+end
+for i ulong len pmact
+if ne get gpmb i get pmact i
+ret false
+end
+end
+ret true
+end
+note step 8 condition: MAILBOX0, MAILBOX1 only when MAILBOX0 is the argument address, then HWCFG2
+fn lockdone to bool
+m0 = gsprd GMB0
+put gout 9 m0
+pa = get gin 1
+if ne m0 0
+if eq m0 and pa M32
+m1 = gsprd GMB1
+put gout 10 m1
+if eq m1 shr pa 32
+ret false
+end
+end
+end
+h = gsprd GHWCFG2
+put gout 8 h
+ret or eq and h LOCKDN 0 ne m0 0
+end
+note one check of wait k (0 step 1, 1 step 6, 2 step 7, 3 step 8): true when it is over
+fn pollonce k ulong to bool
+if eq k 0
+hd = gsprd S2QH
+ret eq hd gsprd S2QT
+end
+if eq k 1
+mb = gsprd S2MB0
+put gout 6 mb
+ret ne mb CMDBUSY
+end
+if eq k 2
+hw = gsprd GHWCFG2
+put gout 8 hw
+ret maskrel hw
+end
+ret lockdone
+end
+note wait k with budget gin 3+k (a uint32): checks, then budget, then pause, as the C loop; the polls
+note used go to gout k. Inner loops stop themselves at 999998 passes, so no loop reaches its bound.
+fn pollstep k ulong to bool
+b = get gin add 3 k
+n = ulong 0
+ok = false
+stop = false
+while not stop bound 4400
+c = ulong 0
+while true bound 999999
+if pollonce k
+ok = true
+stop = true
+break
+end
+if ge n b
+stop = true
+break
+end
+gsppause
+n = add n 1
+c = add c 1
+if eq c 999998
+break
+end
+end
+end
+put gout k n
+ret ok
+end
+note step 3: whole dwords little-endian, then a short tail zero-padded
+fn ememput ln ulong to void
+i = ulong 0
+while le add i 4 ln bound 300
+v = or ulong get gpkt i shl ulong get gpkt add i 1 8
+v = or v or shl ulong get gpkt add i 2 16 shl ulong get gpkt add i 3 24
+gspwr S2EMD v
+i = add i 4
+end
+if lt i ln
+t = ulong 0
+k = ulong 0
+while lt add i k ln bound 4
+t = or t shl ulong get gpkt add i k mul 8 k
+k = add k 1
+end
+gspwr S2EMD t
+end
+end
+fn gspfail e long to long
+put gstage 0 e
+ret e
+end
+note steps 1-11; returns the stage (also in gstage). Budgets and app_version are uint32 in the C
+note struct: a value above that range is refused as an argument error.
+fn gspboot to long
+for i ulong 12
+put gout i 0
+end
+put gstage 0 EARG
+ln = get gin 0
+if or eq ln 0 gt ln CHBYTES
+ret EARG
+end
+for j ulong 5
+if gt get gin add 2 j M32
+ret EARG
+end
+end
+if not gsppm
+ret gspfail EPM
+end
+if not pollstep 0
+ret gspfail EBUSY
+end
+gspwr S2EMC AINCW
+st = ememdw gsprd S2EMC
+ememput ln
+dw = div add ln 3 4
+put gout 4 dw
+ea = gsprd S2EMC
+put gout 5 ea
+if ne and sub ememdw ea st M32 dw
+ret gspfail EEMEM
+end
+gspwr S2QT sub mul dw 4 4
+gspwr S2QH 0
+if not pollstep 1
+put gout 7 gsprd S2MB1
+ret gspfail ESEC2
+end
+if not pollstep 2
+ret gspfail EMASK
+end
+if not pollstep 3
+put gout 10 gsprd GMB1
+ret gspfail ELOCK
+end
+m0 = gsprd GMB0
+put gout 9 m0
+if ne m0 0
+ret gspfail EFMC
+end
+gspwr GOS get gin 2
+cp = gsprd GCPUCTL
+put gout 11 cp
+if eq and cp CPUACT 0
+ret gspfail ERISCV
+end
+ret gspfail EOK
+end
+note announce new command-queue elements to GSP-RM (after the ring write and its fence)
+fn gspnotify to void
+gspwr GQH 0
+end

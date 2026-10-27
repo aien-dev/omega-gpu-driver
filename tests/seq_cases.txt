@@ -1,0 +1,46 @@
+# tests/seq_cases.txt: cases for tests/seq_diff.sh, read by tests/seq_trace.om (gsp/seq.om) and tests/seq_ref.c (C).
+# name busy budget core corefail nwords end m w0 .. w(m-1)   (decimal; words past m are 0)
+# opcodes: 0 WRITE a v, 1 MODIFY a mask v, 2 POLL a mask v tmo err, 3 DELAY us, 4 STORE a idx, 5..8 core
+# registers: 8653504 SEC2 EMEMC(0) 0x840ac0 (plain), 8653824 SEC2 QUEUE_HEAD(0) 0x840c00 (busy_reads),
+# 1114356 GSP HWCFG2 0x1100f4 (reads 0xBADF41A7, no writes), 1114240 GSP FALCON_OS 0x110080 (write = violation)
+empty 0 4 0 0 0 0 0
+idxeq 0 4 0 0 3 3 3 0 8653504 1
+idxgt 0 4 0 0 3 5 3 0 8653504 1
+one-word 0 4 0 0 1 0 0
+write 0 4 0 0 4 3 3 0 8653504 2748
+modify 0 4 0 0 8 7 7 0 8653504 255 1 8653504 10 5
+modhigh 0 4 0 0 8 7 7 0 8653504 3735928559 1 8653504 4294901760 305397760
+modhwcfg2 0 4 0 0 5 4 4 1 1114356 255 0
+pollnow 0 4 0 0 10 9 9 0 8653504 4615 2 8653504 255 7 0 0
+pollmask 0 4 0 0 10 9 9 0 8653504 4615 2 8653504 65280 4608 0 0
+pollneg 0 4 0 0 10 9 9 0 8653504 4615 2 8653504 65280 18 0 0
+pollzero 0 4 0 0 7 6 6 2 1114356 0 0 0 0
+qhsettle 4 4 0 0 7 6 6 2 8653824 4294967295 16 0 0
+qhtimeout 5 4 0 0 7 6 6 2 8653824 4294967295 16 0 0
+qhbud0ok 1 0 0 0 7 6 6 2 8653824 4294967295 16 0 0
+qhbud0to 2 0 0 0 7 6 6 2 8653824 4294967295 16 0 0
+qhbud1to 2 1 0 0 7 6 6 2 8653824 4294967295 16 0 0
+qhbudmax 999998 999998 0 0 7 6 6 2 8653824 4294967295 16 0 0
+qhlong 900 1000 0 0 7 6 6 2 8653824 4294967295 16 0 0
+delay 0 4 0 0 5 4 4 3 25 3 7
+store 0 4 0 0 10 9 9 0 8653504 3735928559 4 8653504 0 4 8653504 7
+storehw 0 4 0 0 4 3 3 4 1114356 3
+store8 0 4 0 0 10 9 9 0 8653504 1 4 8653504 7 4 8653504 8
+unk9 0 4 1 0 5 4 4 0 8653504 1 9
+unk99 0 4 1 0 2 1 1 99
+unkhigh 0 4 1 0 2 1 1 2147483648
+cut 0 4 0 0 4 2 3 0 1 0
+writeover 0 4 0 0 3 2 3 0 8653504 1
+pollover 0 4 0 0 6 5 5 2 8653504 0 0 0
+delayover 0 4 0 0 2 1 1 3
+storeover 0 4 0 0 3 2 2 4 8653504
+modover 0 4 0 0 4 3 3 1 8653504 0
+pollfit 0 4 0 0 7 6 6 2 8653504 0 0 0 0
+corenone 0 4 0 0 2 1 1 5
+coreall 0 4 1 0 5 4 4 5 6 7 8
+corefail7 0 4 1 7 5 4 4 5 6 7 8
+corefail8 0 4 1 8 5 4 4 0 8653504 1 8
+mixed 0 4 1 0 20 19 19 0 8653504 255 1 8653504 15 160 3 5 4 8653504 2 5 2 8653504 255 240 0 0
+garbage 0 4 0 0 6 3 5 0 8653504 1 99 99
+falconos 0 4 0 0 7 6 6 0 1114240 1 0 0 7
+full 0 4 0 0 16384 16383 0

@@ -1,0 +1,518 @@
+note gsp/sha2.om: SHA-256 and SHA-384 (FIPS 180-4) in seeded Omega (OM-1), for the GB10 firmware
+note inputs. Ports the digests the aienux PR #441 tools use: argus/sha256.c (sha256_init/update/final,
+note used by ck_gsp_fw_inspect.c and ck_gsp_bindata_extract.c) and the SHA-384 of
+note ck_gsp_bindata_extract.c lines 84-197 (sha512_block, sha384). Library unit: no main.
+note Prefix sh. Input is always the window shin[off..off+n), n <= SHWIN; callers copy or pread into it.
+note SHA-256: eight independent streaming contexts cx 0..7 (shh, shtot, shbn, shbf), so one pass over a
+note file can feed several digests. SHA-384: one streaming context (sh5h, sh5t, sh5n, sh5b).
+note A digest lands in shout (32 or 48 bytes); shhex n writes its lowercase hex into shhx[0..2n).
+note Constants: K256 = first 32 bits of the fractional parts of the cube roots of the first 64 primes,
+note K512 = first 64 bits for the first 80 primes, IV256 = square roots of the first 8 primes (32 bits),
+note IV384 = square roots of primes 9..16 (64 bits). All decimal, computed by WolframLanguageEvaluator:
+note Table[Floor[FractionalPart[N[CubeRoot[Prime[i]],120]]*2^64],{i,80}] (and the 2^32 / Sqrt forms);
+note spot checks against the C hex: K512[0] 0x428a2f98d728ae22, K512[79] 0x6c44198c4a475817,
+note IV384[0] 0xcbbb9d5dc1059ed8, IV384[7] 0x47b5481dbefa4fa4, K256[63] 0xc67178f2.
+const SHWIN ulong 524288
+global shin uchar 524288
+global shok ulong 1
+global shk uint 64
+global shk5 ulong 80
+global shh uint 64
+global shv uint 8
+global shtot ulong 8
+global shbn ulong 8
+global shbf uchar 512
+global shw uint 64
+global sh5h ulong 8
+global sh5t ulong 1
+global sh5n ulong 1
+global sh5b uchar 128
+global sh5w ulong 80
+global shout uchar 64
+global shhx uchar 128
+fn shsetup to void
+if eq get shok 0 1
+ret
+end
+put shk 0 1116352408
+put shk 1 1899447441
+put shk 2 3049323471
+put shk 3 3921009573
+put shk 4 961987163
+put shk 5 1508970993
+put shk 6 2453635748
+put shk 7 2870763221
+put shk 8 3624381080
+put shk 9 310598401
+put shk 10 607225278
+put shk 11 1426881987
+put shk 12 1925078388
+put shk 13 2162078206
+put shk 14 2614888103
+put shk 15 3248222580
+put shk 16 3835390401
+put shk 17 4022224774
+put shk 18 264347078
+put shk 19 604807628
+put shk 20 770255983
+put shk 21 1249150122
+put shk 22 1555081692
+put shk 23 1996064986
+put shk 24 2554220882
+put shk 25 2821834349
+put shk 26 2952996808
+put shk 27 3210313671
+put shk 28 3336571891
+put shk 29 3584528711
+put shk 30 113926993
+put shk 31 338241895
+put shk 32 666307205
+put shk 33 773529912
+put shk 34 1294757372
+put shk 35 1396182291
+put shk 36 1695183700
+put shk 37 1986661051
+put shk 38 2177026350
+put shk 39 2456956037
+put shk 40 2730485921
+put shk 41 2820302411
+put shk 42 3259730800
+put shk 43 3345764771
+put shk 44 3516065817
+put shk 45 3600352804
+put shk 46 4094571909
+put shk 47 275423344
+put shk 48 430227734
+put shk 49 506948616
+put shk 50 659060556
+put shk 51 883997877
+put shk 52 958139571
+put shk 53 1322822218
+put shk 54 1537002063
+put shk 55 1747873779
+put shk 56 1955562222
+put shk 57 2024104815
+put shk 58 2227730452
+put shk 59 2361852424
+put shk 60 2428436474
+put shk 61 2756734187
+put shk 62 3204031479
+put shk 63 3329325298
+put shk5 0 4794697086780616226
+put shk5 1 8158064640168781261
+put shk5 2 13096744586834688815
+put shk5 3 16840607885511220156
+put shk5 4 4131703408338449720
+put shk5 5 6480981068601479193
+put shk5 6 10538285296894168987
+put shk5 7 12329834152419229976
+put shk5 8 15566598209576043074
+put shk5 9 1334009975649890238
+put shk5 10 2608012711638119052
+put shk5 11 6128411473006802146
+put shk5 12 8268148722764581231
+put shk5 13 9286055187155687089
+put shk5 14 11230858885718282805
+put shk5 15 13951009754708518548
+put shk5 16 16472876342353939154
+put shk5 17 17275323862435702243
+put shk5 18 1135362057144423861
+put shk5 19 2597628984639134821
+put shk5 20 3308224258029322869
+put shk5 21 5365058923640841347
+put shk5 22 6679025012923562964
+put shk5 23 8573033837759648693
+put shk5 24 10970295158949994411
+put shk5 25 12119686244451234320
+put shk5 26 12683024718118986047
+put shk5 27 13788192230050041572
+put shk5 28 14330467153632333762
+put shk5 29 15395433587784984357
+put shk5 30 489312712824947311
+put shk5 31 1452737877330783856
+put shk5 32 2861767655752347644
+put shk5 33 3322285676063803686
+put shk5 34 5560940570517711597
+put shk5 35 5996557281743188959
+put shk5 36 7280758554555802590
+put shk5 37 8532644243296465576
+put shk5 38 9350256976987008742
+put shk5 39 10552545826968843579
+put shk5 40 11727347734174303076
+put shk5 41 12113106623233404929
+put shk5 42 14000437183269869457
+put shk5 43 14369950271660146224
+put shk5 44 15101387698204529176
+put shk5 45 15463397548674623760
+put shk5 46 17586052441742319658
+put shk5 47 1182934255886127544
+put shk5 48 1847814050463011016
+put shk5 49 2177327727835720531
+put shk5 50 2830643537854262169
+put shk5 51 3796741975233480872
+put shk5 52 4115178125766777443
+put shk5 53 5681478168544905931
+put shk5 54 6601373596472566643
+put shk5 55 7507060721942968483
+put shk5 56 8399075790359081724
+put shk5 57 8693463985226723168
+put shk5 58 9568029438360202098
+put shk5 59 10144078919501101548
+put shk5 60 10430055236837252648
+put shk5 61 11840083180663258601
+put shk5 62 13761210420658862357
+put shk5 63 14299343276471374635
+put shk5 64 14566680578165727644
+put shk5 65 15097957966210449927
+put shk5 66 16922976911328602910
+put shk5 67 17689382322260857208
+put shk5 68 500013540394364858
+put shk5 69 748580250866718886
+put shk5 70 1242879168328830382
+put shk5 71 1977374033974150939
+put shk5 72 2944078676154940804
+put shk5 73 3659926193048069267
+put shk5 74 4368137639120453308
+put shk5 75 4836135668995329356
+put shk5 76 5532061633213252278
+put shk5 77 6448918945643986474
+put shk5 78 6902733635092675308
+put shk5 79 7801388544844847127
+put shok 0 1
+end
+note SHA-256 context cx (0..7): chaining value shh[8cx..8cx+8), bytes absorbed shtot[cx], pending
+note block shbf[64cx..64cx+shbn[cx])
+fn sh2init cx ulong to void
+shsetup
+b = mul cx 8
+put shh b 1779033703
+put shh add b 1 3144134277
+put shh add b 2 1013904242
+put shh add b 3 2773480762
+put shh add b 4 1359893119
+put shh add b 5 2600822924
+put shh add b 6 528734635
+put shh add b 7 1541459225
+put shtot cx 0
+put shbn cx 0
+end
+note the 64 rounds over the schedule in shw, folded into the chaining value in shv (16 registers:
+note the state lives in a..h, the sums are built one term at a time)
+fn sh2rnd to void
+a = get shv 0
+b = get shv 1
+c = get shv 2
+d = get shv 3
+e = get shv 4
+f = get shv 5
+g = get shv 6
+h = get shv 7
+for t ulong 64
+x = or shr e 6 shl e 26
+x = xor x or shr e 11 shl e 21
+x = xor x or shr e 25 shl e 7
+x = add x h
+x = add x xor and e f and not e g
+x = add x get shk t
+x = add x get shw t
+h = g
+g = f
+f = e
+e = add d x
+d = c
+c = b
+b = a
+y = or shr b 2 shl b 30
+y = xor y or shr b 13 shl b 19
+y = xor y or shr b 22 shl b 10
+x = add x y
+y = xor and b c and b d
+y = xor y and c d
+a = add x y
+end
+put shv 0 add get shv 0 a
+put shv 1 add get shv 1 b
+put shv 2 add get shv 2 c
+put shv 3 add get shv 3 d
+put shv 4 add get shv 4 e
+put shv 5 add get shv 5 f
+put shv 6 add get shv 6 g
+put shv 7 add get shv 7 h
+end
+note one 64-byte block: src 0 = shin[off..off+64), src 1 = shbf[off..off+64)
+fn sh2comp cx ulong src ulong off ulong to void
+for t ulong 16
+p = add off mul t 4
+if eq src 0
+v = or shl uint get shin p 24 shl uint get shin add p 1 16
+v = or v or shl uint get shin add p 2 8 uint get shin add p 3
+put shw t v
+else
+v = or shl uint get shbf p 24 shl uint get shbf add p 1 16
+v = or v or shl uint get shbf add p 2 8 uint get shbf add p 3
+put shw t v
+end
+end
+for u ulong 48
+i = add u 16
+x = get shw sub i 2
+s = or shr x 17 shl x 15
+s = xor s or shr x 19 shl x 13
+s = xor s shr x 10
+y = get shw sub i 15
+r = or shr y 7 shl y 25
+r = xor r or shr y 18 shl y 14
+r = xor r shr y 3
+s = add s get shw sub i 7
+r = add r get shw sub i 16
+put shw i add s r
+end
+bs = mul cx 8
+for j ulong 8
+put shv j get shh add bs j
+end
+sh2rnd
+for j2 ulong 8
+put shh add bs j2 get shv j2
+end
+end
+note absorb shin[off..off+n) into context cx; n <= SHWIN
+fn sh2upd cx ulong off ulong n ulong to void
+if gt n SHWIN
+trap 3
+end
+bo = mul cx 64
+i = ulong 0
+while lt i n bound 999999
+bn = get shbn cx
+if and eq bn 0 le add i 64 n
+sh2comp cx 0 add off i
+i = add i 64
+else
+put shbf add bo bn get shin add off i
+bn = add bn 1
+i = add i 1
+if eq bn 64
+sh2comp cx 1 bo
+bn = ulong 0
+end
+put shbn cx bn
+end
+end
+put shtot cx add get shtot cx n
+end
+note pad and finish context cx: the 32-byte digest goes to shout[0..32)
+fn sh2fin cx ulong to void
+bo = mul cx 64
+bits = mul get shtot cx 8
+bn = get shbn cx
+put shbf add bo bn 128
+bn = add bn 1
+if gt bn 56
+while lt bn 64 bound 64
+put shbf add bo bn 0
+bn = add bn 1
+end
+sh2comp cx 1 bo
+bn = ulong 0
+end
+while lt bn 56 bound 64
+put shbf add bo bn 0
+bn = add bn 1
+end
+for k ulong 8
+bn = and shr bits mul sub 7 k 8 255
+put shbf add bo add 56 k uchar bn
+end
+sh2comp cx 1 bo
+put shbn cx 0
+bo = mul cx 8
+for j ulong 8
+bits = ulong get shh add bo j
+bn = mul j 4
+put shout bn uchar and shr bits 24 255
+put shout add bn 1 uchar and shr bits 16 255
+put shout add bn 2 uchar and shr bits 8 255
+put shout add bn 3 uchar and bits 255
+end
+end
+note hash bytes [off, off+n) of the open file fd into context cx through shin; returns 0, the negative
+note errno of a failed pread, or -5 (EIO) when the file ends early
+fn sh2file cx ulong fd int off ulong n ulong to long
+p = ulong 0
+while lt p n bound 999999
+k = sub n p
+if gt k SHWIN
+k = SHWIN
+end
+q = ulong 0
+while lt q k bound 999999
+r = pread fd shin q sub k q long add add off p q
+if lt r 0
+ret r
+end
+if eq r 0
+ret -5
+end
+q = add q ulong r
+end
+sh2upd cx 0 k
+p = add p k
+end
+ret 0
+end
+note SHA-384 (one context)
+fn sh5init to void
+shsetup
+put sh5h 0 14680500436340154072
+put sh5h 1 7105036623409894663
+put sh5h 2 10473403895298186519
+put sh5h 3 1526699215303891257
+put sh5h 4 7436329637833083697
+put sh5h 5 10282925794625328401
+put sh5h 6 15784041429090275239
+put sh5h 7 5167115440072839076
+put sh5t 0 0
+put sh5n 0 0
+end
+fn sh5rnd to void
+a = get sh5h 0
+b = get sh5h 1
+c = get sh5h 2
+d = get sh5h 3
+e = get sh5h 4
+f = get sh5h 5
+g = get sh5h 6
+h = get sh5h 7
+for t ulong 80
+x = or shr e 14 shl e 50
+x = xor x or shr e 18 shl e 46
+x = xor x or shr e 41 shl e 23
+x = add x h
+x = add x xor and e f and not e g
+x = add x get shk5 t
+x = add x get sh5w t
+h = g
+g = f
+f = e
+e = add d x
+d = c
+c = b
+b = a
+y = or shr b 28 shl b 36
+y = xor y or shr b 34 shl b 30
+y = xor y or shr b 39 shl b 25
+x = add x y
+y = xor and b c and b d
+y = xor y and c d
+a = add x y
+end
+put sh5h 0 add get sh5h 0 a
+put sh5h 1 add get sh5h 1 b
+put sh5h 2 add get sh5h 2 c
+put sh5h 3 add get sh5h 3 d
+put sh5h 4 add get sh5h 4 e
+put sh5h 5 add get sh5h 5 f
+put sh5h 6 add get sh5h 6 g
+put sh5h 7 add get sh5h 7 h
+end
+note one 128-byte block: src 0 = shin[off..off+128), src 1 = sh5b
+fn sh5comp src ulong off ulong to void
+for t ulong 16
+v = ulong 0
+for k ulong 8
+if eq src 0
+v = or shl v 8 ulong get shin add add off mul t 8 k
+else
+v = or shl v 8 ulong get sh5b add mul t 8 k
+end
+end
+put sh5w t v
+end
+for u ulong 64
+i = add u 16
+x = get sh5w sub i 2
+s = or shr x 19 shl x 45
+s = xor s or shr x 61 shl x 3
+s = xor s shr x 6
+y = get sh5w sub i 15
+r = or shr y 1 shl y 63
+r = xor r or shr y 8 shl y 56
+r = xor r shr y 7
+s = add s get sh5w sub i 7
+r = add r get sh5w sub i 16
+put sh5w i add s r
+end
+sh5rnd
+end
+fn sh5upd off ulong n ulong to void
+if gt n SHWIN
+trap 3
+end
+i = ulong 0
+while lt i n bound 999999
+bn = get sh5n 0
+if and eq bn 0 le add i 128 n
+sh5comp 0 add off i
+i = add i 128
+else
+put sh5b bn get shin add off i
+bn = add bn 1
+i = add i 1
+if eq bn 128
+sh5comp 1 0
+bn = ulong 0
+end
+put sh5n 0 bn
+end
+end
+put sh5t 0 add get sh5t 0 n
+end
+note pad and finish: the 48-byte digest goes to shout[0..48) (message length below 2^61 bytes)
+fn sh5fin to void
+bits = mul get sh5t 0 8
+bn = get sh5n 0
+put sh5b bn 128
+bn = add bn 1
+if gt bn 112
+while lt bn 128 bound 128
+put sh5b bn 0
+bn = add bn 1
+end
+sh5comp 1 0
+bn = ulong 0
+end
+while lt bn 120 bound 128
+put sh5b bn 0
+bn = add bn 1
+end
+for k ulong 8
+bn = and shr bits mul sub 7 k 8 255
+put sh5b add 120 k uchar bn
+end
+sh5comp 1 0
+put sh5n 0 0
+for j ulong 48
+bits = get sh5h div j 8
+bn = and shr bits mul sub 7 rem j 8 8 255
+put shout j uchar bn
+end
+end
+note lowercase hex of shout[0..n) into shhx[0..2n), n <= 64
+fn shhex n ulong to void
+for i ulong n
+b = get shout i
+hi = shr b 4
+lo = and b 15
+if lt hi 10
+put shhx mul i 2 add hi 48
+else
+put shhx mul i 2 add hi 87
+end
+if lt lo 10
+put shhx add mul i 2 1 add lo 48
+else
+put shhx add mul i 2 1 add lo 87
+end
+end
+end
