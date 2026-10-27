@@ -76,13 +76,14 @@ and `/proc` live under `OWNDRIVER_WINDOW_ROOT`, and sudo, systemctl, modprobe, s
 curl, tee, stat, fuser, modinfo, lsinitramfs and spark-window are shims there. `common.sh` exits 2 unless the root
 is under /tmp, carries `.owndriver-window-sim`, and every one of those commands resolves to the shim, so a
 simulation can never reach the real machine. The harness simulates each reboot (fresh /tmp, 35B gone, nvidia loaded
-unless held back, boot unit run if enabled). Scenarios: W0, full D2, rebind restore, missing approval, missing
-reset line, chip lock held, mismatched 35B launch record, W1 failure after the 35B stop, runtime PM stuck, w0
-failure, crash mid-W3, one restore fallback, restore failing twice, privilege leak, world-writable `/dev/vfio/20`,
-chip lock taken right after the W1 reboot, D3 without ogd, stale unit. What it cannot show: real FLR and SBR
-behaviour, nvidia.ko reload after them, real boot timing.
+unless held back, boot unit run if enabled). Scenarios: W0, W0 with a matching and with a tampered `build/fw`, full
+D2, rebind restore, missing approval, missing reset line, chip lock held, mismatched 35B launch record, W1 failure
+after the 35B stop, runtime PM stuck, w0 failure, crash mid-W3, one restore fallback, restore failing twice,
+privilege leak, world-writable `/dev/vfio/20`, chip lock taken right after the W1 reboot, D3 without ogd, stale
+unit. `tests/mutants-window.sh` deletes one safety step at a time and checks that a scenario fails. What it cannot
+show: real FLR and SBR behaviour, nvidia.ko reload after them, real boot timing.
 
 ## Before posting WINDOW-READY
 
-Run `sh build.sh` and `sh window/d2-pre.sh`. The sha256 values on the W0 log lines are the ones quoted in the
+Run `OGKM=<checkout> sh build.sh` and `sh window/d2-pre.sh`. The sha256 values on the W0 log lines are the ones quoted in the
 BOARD `WINDOW-READY` line. Any later edit to a hashed file changes those values, and W0 must be re-run.

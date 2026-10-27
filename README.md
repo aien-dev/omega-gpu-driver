@@ -51,6 +51,8 @@ traps. See omega-mv `seed/host/MAPPING.md`.
 ## Build and test
 
     sh build.sh          # births the pinned omc from seed-0, checks its sha256, writes build/w0, build/fwprep
+    OGKM=<open-gpu-kernel-modules 580.173.02 checkout> sh build.sh
+                         # also runs build/fwprep on the installed gsp_ga10x.bin into build/fw (fw.manifest)
     KERNEL=img/boot/vmlinuz-7.0.0-1019-nvidia sh qemu/test.sh
                          # QEMU virt + SMMUv3, edu device on vfio-pci, 9 commands, all results checked
     KERNEL=... DEVICES='-device pcie-root-port,id=rp1,chassis=1,slot=1 -device edu,bus=rp1' \

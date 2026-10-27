@@ -21,13 +21,21 @@ done
 omc_pin=$(sed -n 's/^OMC_SHA256=//p' "$R/tools/omc.pin")
 [ "$(sha256sum "$R/build/omc" | cut -c1-64)" = "$omc_pin" ] || die "build/omc does not match tools/omc.pin"
 [ -x "$BUILD/w0" ] || die "build/w0 missing: run sh build.sh"
+if [ -e "$BUILD/fw/fw.manifest" ]; then
+	# fwprep writes fw.manifest last, with one 'out NAME bytes=N sha256=H' line per output file.
+	fwsha=$(sha256sum "$FW" | cut -c1-64)
+	grep -q "^fw_file bytes=[0-9]* sha256=$fwsha\$" "$BUILD/fw/fw.manifest" ||
+		die "build/fw/fw.manifest was made from a different firmware file: rerun sh build.sh"
+	sed -n 's/^out \([a-z.]*\) bytes=[0-9]* sha256=\([0-9a-f]\{64\}\)$/\2  \1/p' "$BUILD/fw/fw.manifest" > "$LOGDIR/fw.check"
+	[ "$(wc -l < "$LOGDIR/fw.check")" = 5 ] && grep -qx end "$BUILD/fw/fw.manifest" ||
+		die "build/fw/fw.manifest is incomplete: rerun sh build.sh"
+	(cd "$BUILD/fw" && sha256sum -c --quiet "$LOGDIR/fw.check") ||
+		die "build/fw files do not match build/fw/fw.manifest: rerun sh build.sh"
+	rm -f "$LOGDIR/fw.check"
+	log "build/fw matches fw.manifest"
+fi
 if [ -x "$BUILD/ogd" ]; then
 	log "ogd modes: $("$BUILD/ogd" modes | tr '\n' ' ')"
-	if [ -e "$R/build/fw/fw.manifest" ]; then
-		(cd "$R/build/fw" && sed -n 's/^sha256 \([0-9a-f]\{64\}\) \([a-z.]*\)$/\1  \2/p' fw.manifest | sha256sum -c --quiet) ||
-			die "build/fw files do not match build/fw/fw.manifest: rerun sh build.sh"
-		log "build/fw matches fw.manifest"
-	fi
 fi
 [ "$(cat "$DEV/vendor"):$(cat "$DEV/device")" = 0x10de:0x2e12 ] || die "$BDF is not 10de:2e12"
 [ "$(basename "$(readlink "$DEV/iommu_group")")" = "$GRP" ] || die "iommu group is not $GRP"

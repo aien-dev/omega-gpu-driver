@@ -14,6 +14,7 @@ d2-pre.sh@s/^flock -n 9 || die/true || die/@W1 chip lock
 d2-pre.sh@s/^trap .abort_w1. EXIT$/:/@W1 abort trap
 d2-pre.sh@s/^\tif cmp -s "$SNAP.now" "$SNAP.want"; then$/\tif true; then/@W0 launch record check
 d2-pre.sh@s/^\[ "$STAGE" = D2 \] || \[ -x "$BUILD\/ogd" \] ||/true ||/@D3 needs ogd
+d2-pre.sh@s/^\t(cd "$BUILD\/fw" .* sha256sum -c --quiet .*) ||$/\ttrue ||/@W0 build\/fw hash check
 d2-run.sh@s/^echo restore > "$STATE"$/:/@W2 state=restore before acting
 d2-run.sh@s/^flock -n 9 || die/true || die/@W2 chip lock
 d2-run.sh@/^\[ "$m" = root:root:600 \] || die/d@W2 /dev/vfio mode check

@@ -239,6 +239,32 @@ run_window "$S" sh window/d2-pre.sh
 check "W0 exit 0" "grep -qx 'cmd exit 0' $S/st/events"; untouched
 check "baseline written" "[ -s $(L)/priv-baseline ]"
 
+# mkfw S: a build/fw in fwprep's manifest format (fw_file names the real firmware sha256).
+mkfw() {
+	mkdir -p "$1/build/fw"
+	{
+		echo "fwmanifest 1"
+		echo "fw_file bytes=75012080 sha256=32cb7cf3e77f97e92f6e92135939ccb3ba382748144569c0dfccf3338d43d963"
+		for o in fmc.img fmc.hash fmc.pubkey fmc.sig bl.img; do
+			echo "sim $o" > "$1/build/fw/$o"
+			echo "out $o bytes=$(wc -c < "$1/build/fw/$o") sha256=$(sha256sum "$1/build/fw/$o" | cut -c1-64)"
+		done
+		echo end
+	} > "$1/build/fw/fw.manifest.tmp"
+	mv "$1/build/fw/fw.manifest.tmp" "$1/build/fw/fw.manifest"
+}
+CASE=fwgood;      echo "case $CASE: W0 with a matching build/fw"; mkroot $CASE
+mkfw "$S"
+run_window "$S" sh window/d2-pre.sh
+check "W0 exit 0" "grep -qx 'cmd exit 0' $S/st/events"; untouched
+check "build/fw checked" "grep -q 'build/fw matches fw.manifest' $(L)/*-pre.log"
+
+CASE=fwbad;       echo "case $CASE: W0 with a build/fw file that differs from fw.manifest"; mkroot $CASE
+mkfw "$S"; echo tampered > "$S/build/fw/bl.img"
+run_window "$S" sh window/d2-pre.sh
+check "W0 refused" "grep -qx 'cmd exit 1' $S/st/events"; untouched
+check "names the mismatch" "grep -q 'build/fw files do not match' $(L)/*-pre.log"
+
 CASE=d2;          echo "case $CASE: full D2 window, reboot restore path"; mkroot $CASE
 run_window "$S" sh window/d2-pre.sh --go D2
 boots 2; restored
