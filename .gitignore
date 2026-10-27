@@ -1,4 +1,4 @@
 build/
 qemu/bench/initramfs.cpio.gz
-qemu/bench/run.*
-qemu/bench/root.*
+qemu/bench/run.??????
+qemu/bench/root.??????
