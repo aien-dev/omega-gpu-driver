@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0.0",
+  "name": "omega-gpu-driver",
+  "layer": "driver",
+  "purpose": "Omega GPU driver for the GB10, written in seeded Omega. W0: bind-read-release identity probe over VFIO.",
+  "parent": {
+    "repo": "aien-dev/omega-mv",
+    "commit": "7ae2aef9b21a3885effa246975b123d5aa83f37b",
+    "why": "the seeded compiler (omc) and its vfioctl/vfiomap words"
+  }
+}

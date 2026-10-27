@@ -1,0 +1,23 @@
+{
+  "project_name": "omega-gpu-driver",
+  "parent": {
+    "repo": "aien-dev/omega-mv",
+    "commit": "7ae2aef9b21a3885effa246975b123d5aa83f37b"
+  },
+  "goals": [
+    {
+      "id": "w0",
+      "title": "W0: bind, read identity, release",
+      "description": "w0.om opens a vfio-pci device through VFIO, reads PMC_BOOT_0/1/42 and config identity read-only, and releases it.",
+      "status": "Active",
+      "milestones": [
+        {"id": 1, "description": "omega-mv vfioctl/vfiomap words (draft PR)", "completed": true},
+        {"id": 2, "description": "w0.om exercised in QEMU (virt + SMMUv3 + edu on vfio-pci) with negative controls", "completed": true},
+        {"id": 3, "description": "w0 run on the GB10 in an authorized window (Main binds vfio-pci)", "completed": false},
+        {"id": 4, "description": "omega-mv words merged after non-author review; pin moved to main", "completed": false}
+      ],
+      "created_at": "2026-10-27T00:00:00Z",
+      "updated_at": "2026-10-27T00:00:00Z"
+    }
+  ]
+}

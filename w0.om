@@ -1,0 +1,553 @@
+note w0: bind-read-release identity probe for one vfio-pci device. Usage: w0 BDF GROUP [HEXOFF]
+note It never writes to the device: vfiomap is read-only and every other access is pread.
+note It never calls DEVICE_RESET; Linux vfio-pci resets the function on open where it can.
+note Register offsets (open-gpu-kernel-modules 580.173.02, src/common/inc/swref/published/nv_ref.h):
+note NV_PMC_BOOT_0 0x0 :108, NV_PMC_BOOT_1 0x4 :138, NV_PMC_BOOT_42 0xA00 :149.
+note Config space NV_CONFIG_PCI_NV_0 vendor/device 0x0 :52, NV_CONFIG_PCI_NV_2 rev/class 0x8 :66,
+note NV_CONFIG_PCI_NV_11 subsystem 0x2C :81.
+note VFIO ABI: Linux include/uapi/linux/vfio.h; requests are _IO(';', 100+k) = 15204+k.
+text sysdev "/sys/bus/pci/devices/"
+text sgroup "/iommu_group"
+text sdriver "/driver"
+text sgroups "/sys/kernel/iommu_groups/"
+text sdevices "/devices"
+text vfiopci "vfio-pci"
+text vfioc "/dev/vfio/vfio"
+text vfiodir "/dev/vfio/"
+text usage "w0: usage: w0 BDF GROUP [HEXOFF]  (BDF like 000f:01:00.0, GROUP decimal)\n"
+text egroup "w0: REFUSED: device iommu_group does not match GROUP\n"
+text edriver "w0: REFUSED: device is not bound to vfio-pci\n"
+text esingle "w0: REFUSED: iommu group must hold exactly this one device\n"
+text eapi "w0: REFUSED: VFIO API version or TYPE1v2 extension missing\n"
+text eviable "w0: REFUSED: group not viable\n"
+text econt "w0: REFUSED: could not attach group to container or set TYPE1v2\n"
+text edev "w0: REFUSED: could not get device fd\n"
+text einfo "w0: REFUSED: device info or region info unusable\n"
+text eones "w0: FAIL: BOOT_0 reads 0xffffffff (device not responding)\n"
+text emis "w0: FAIL: mapped and pread values differ\n"
+text emap "w0: FAIL: BAR0 vfiomap returned errno "
+text lbdf "w0: device "
+text lgroup " group "
+text ldev "w0: device flags "
+text lreg " regions "
+text lirq " irqs "
+text lbar "w0: BAR0 flags "
+text lsize " size "
+text loff " offset "
+text lcfg "w0: CONFIG offset "
+text lb0 "w0: BOOT_0  [0x000] "
+text lb1 "w0: BOOT_1  [0x004] "
+text lb42 "w0: BOOT_42 [0xa00] "
+text lvd "w0: config vendor/device [0x00] "
+text lcls "w0: config rev/class     [0x08] "
+text lsub "w0: config subsystem     [0x2c] "
+text lx "w0: extra [0x"
+text lxe "] "
+text lmap " mapget "
+text lpre " pread "
+text ldone "w0: released device, group and container\n"
+text nl "\n"
+global bdf uchar 32
+global grp uchar 8
+global xarg uchar 20
+global path uchar 256
+global plen ulong 1
+global lnk uchar 256
+global dents uchar 4096
+global out uchar 64
+global st uchar 8
+global val uchar 4
+global dinfo uchar 24
+global rbar uchar 32
+global rcfg uchar 32
+global word uchar 4
+global nums ulong 8
+global fds long 4
+fn fail code int msg int to void
+note msg selects the refusal line
+if eq msg 2
+r = write 2 usage 0 len usage
+end
+if eq msg 3
+r = write 2 egroup 0 len egroup
+end
+if eq msg 4
+r = write 2 edriver 0 len edriver
+end
+if eq msg 5
+r = write 2 esingle 0 len esingle
+end
+if eq msg 6
+r = write 2 eapi 0 len eapi
+end
+if eq msg 7
+r = write 2 eviable 0 len eviable
+end
+if eq msg 8
+r = write 2 econt 0 len econt
+end
+if eq msg 9
+r = write 2 edev 0 len edev
+end
+if eq msg 10
+r = write 2 einfo 0 len einfo
+end
+exit code
+end
+fn hexd v ulong to uchar
+if lt v 10
+ret uchar add v 48
+end
+ret uchar add v 87
+end
+note print 0x + 8 hex digits (or 16 when wide), then optionally a newline
+fn hex v ulong wide bool newline bool to void
+n = ulong 8
+if wide
+n = 16
+end
+put out 0 uchar 48
+put out 1 uchar 120
+for i ulong n
+put out add 2 i hexd and shr v mul sub sub n 1 i 4 15
+end
+k = add n 2
+if newline
+put out k uchar 10
+k = add k 1
+end
+r = write 1 out 0 k
+end
+fn le32 a ulong which int to ulong
+v = ulong 0
+if eq which 0
+v = ulong get dinfo add a 3
+v = or shl v 8 ulong get dinfo add a 2
+v = or shl v 8 ulong get dinfo add a 1
+ret or shl v 8 ulong get dinfo a
+end
+if eq which 1
+v = ulong get rbar add a 3
+v = or shl v 8 ulong get rbar add a 2
+v = or shl v 8 ulong get rbar add a 1
+ret or shl v 8 ulong get rbar a
+end
+if eq which 2
+v = ulong get rcfg add a 3
+v = or shl v 8 ulong get rcfg add a 2
+v = or shl v 8 ulong get rcfg add a 1
+ret or shl v 8 ulong get rcfg a
+end
+if eq which 3
+v = ulong get st add a 3
+v = or shl v 8 ulong get st add a 2
+v = or shl v 8 ulong get st add a 1
+ret or shl v 8 ulong get st a
+end
+v = ulong get word 3
+v = or shl v 8 ulong get word 2
+v = or shl v 8 ulong get word 1
+ret or shl v 8 ulong get word 0
+end
+fn le64 a ulong which int to ulong
+ret or le32 a which shl le32 add a 4 which 32
+end
+fn setval v ulong to void
+put val 0 uchar and v 255
+put val 1 uchar and shr v 8 255
+put val 2 uchar and shr v 16 255
+put val 3 uchar and shr v 24 255
+end
+note path building: a fresh path, then pieces; the terminator-free length is plen
+fn preset to void
+put plen 0 0
+end
+fn padd c uchar to void
+p = get plen 0
+put path p c
+put plen 0 add p 1
+end
+fn ptext k int to void
+if eq k 0
+for i ulong len sysdev
+padd get sysdev i
+end
+end
+if eq k 1
+for i ulong len sgroup
+padd get sgroup i
+end
+end
+if eq k 2
+for i ulong len sdriver
+padd get sdriver i
+end
+end
+if eq k 3
+for i ulong len sgroups
+padd get sgroups i
+end
+end
+if eq k 4
+for i ulong len sdevices
+padd get sdevices i
+end
+end
+if eq k 5
+for i ulong len vfiodir
+padd get vfiodir i
+end
+end
+end
+fn pbdf n ulong to void
+for i ulong n
+padd get bdf i
+end
+end
+fn pgrp n ulong to void
+for i ulong n
+padd get grp i
+end
+end
+note the final path component of lnk[0..n) must equal grp[0..g) (which 0) or "vfio-pci" (which 1)
+fn lastis n ulong g ulong which int to bool
+s = ulong 0
+for i ulong n
+if eq get lnk i 47
+s = add i 1
+end
+end
+m = sub n s
+if eq which 0
+if ne m g
+ret false
+end
+for i ulong g
+if ne get lnk add s i get grp i
+ret false
+end
+end
+ret true
+end
+if ne m len vfiopci
+ret false
+end
+for i ulong m
+if ne get lnk add s i get vfiopci i
+ret false
+end
+end
+ret true
+end
+note name at dents[o..] (zero-terminated) equals bdf[0..n)
+fn nameis o ulong n ulong to bool
+for i ulong n
+if ne get dents add o i get bdf i
+ret false
+end
+end
+ret eq get dents add o n 0
+end
+fn isdot o ulong to bool
+if ne get dents o 46
+ret false
+end
+if eq get dents add o 1 0
+ret true
+end
+ret and eq get dents add o 1 46 eq get dents add o 2 0
+end
+fn readcfg dev int base ulong reg ulong to ulong
+r = pread dev word 0 4 long add base reg
+if ne r 4
+fail 10 10
+end
+ret le32 0 4
+end
+note stage 0: argv. nums: 0 bdf length, 1 group length, 2 extra length, 3 extra offset, 4 extra given
+fn args to void
+ac = argcnt
+if or lt ac 3 gt ac 4
+fail 2 2
+end
+bn = argread 1 bdf 0 32
+gn = argread 2 grp 0 8
+if or ne bn 12 or le gn 0 gt gn 6
+fail 2 2
+end
+put nums 0 ulong bn
+put nums 1 ulong gn
+for i ulong 12
+c = get bdf i
+ok = or and ge c 48 le c 57 and ge c 97 le c 102
+if or eq i 4 eq i 7
+ok = eq c 58
+end
+if eq i 10
+ok = eq c 46
+end
+if not ok
+fail 2 2
+end
+end
+for i ulong ulong gn
+c = get grp i
+if or lt c 48 gt c 57
+fail 2 2
+end
+end
+if eq ac 4
+xn = argread 3 xarg 0 16
+if or le xn 0 gt xn 16
+fail 2 2
+end
+x = ulong 0
+for i ulong ulong xn
+c = get xarg i
+d = ulong 99
+if and ge c 48 le c 57
+d = ulong sub c 48
+end
+if and ge c 97 le c 102
+d = ulong sub c 87
+end
+if eq d 99
+fail 2 2
+end
+x = or shl x 4 d
+end
+put nums 2 ulong xn
+put nums 3 x
+put nums 4 1
+end
+end
+note stage 1: sysfs. iommu_group must be GROUP and the driver must be vfio-pci
+fn sysfs to void
+b = get nums 0
+g = get nums 1
+preset
+ptext 0
+pbdf b
+ptext 1
+n = readlnk path 0 get plen 0 lnk 0 256
+if or le n 0 ge n 256
+fail 3 3
+end
+if not lastis ulong n g 0
+fail 3 3
+end
+preset
+ptext 0
+pbdf b
+ptext 2
+n = readlnk path 0 get plen 0 lnk 0 256
+if or le n 0 ge n 256
+fail 4 4
+end
+if not lastis ulong n 0 1
+fail 4 4
+end
+end
+note stage 2: /sys/kernel/iommu_groups/GROUP/devices must list exactly this device
+fn single to void
+b = get nums 0
+preset
+ptext 3
+pgrp get nums 1
+ptext 4
+dfd = fopen path 0 get plen 0 540672 0
+if lt dfd 0
+fail 5 5
+end
+count = ulong 0
+other = ulong 0
+while true bound 4096
+r = getdnts int dfd dents 0 4096
+if lt r 0
+fail 5 5
+end
+if eq r 0
+break
+end
+o = ulong 0
+while lt o ulong r bound 4096
+rl = ulong get dents add o 17
+rl = or shl rl 8 ulong get dents add o 16
+if eq rl 0
+fail 5 5
+end
+if not isdot add o 19
+count = add count 1
+if not nameis add o 19 b
+other = add other 1
+end
+end
+o = add o rl
+end
+end
+r = fclose int dfd
+if or ne count 1 ne other 0
+fail 5 5
+end
+end
+note stage 3: container API 0 + TYPE1v2, group viable, attach, set TYPE1v2, device fd by name
+fn attach to void
+cfd = fopen vfioc 0 len vfioc 524290 0
+if lt cfd 0
+fail 6 6
+end
+ci = int cfd
+put fds 0 cfd
+if ne vfioctl ci uint 15204 val 0 0 0
+fail 6 6
+end
+setval 3
+if ne vfioctl ci uint 15205 val 0 4 1
+fail 6 6
+end
+preset
+ptext 5
+pgrp get nums 1
+gfd = fopen path 0 get plen 0 524290 0
+if lt gfd 0
+fail 7 7
+end
+gi = int gfd
+put fds 1 gfd
+if ne vfioctl gi uint 15207 st 0 8 0
+fail 7 7
+end
+if eq and le32 4 3 1 0
+fail 7 7
+end
+setval ulong cfd
+if ne vfioctl gi uint 15208 val 0 4 0
+fail 8 8
+end
+setval 3
+if ne vfioctl ci uint 15206 val 0 4 0
+fail 8 8
+end
+dv = vfioctl gi uint 15210 bdf 0 get nums 0
+if lt dv 0
+fail 9 9
+end
+put fds 2 dv
+r = write 1 lbdf 0 len lbdf
+r = write 1 bdf 0 get nums 0
+r = write 1 lgroup 0 len lgroup
+r = write 1 grp 0 get nums 1
+r = write 1 nl 0 len nl
+end
+note stage 4: device info (PCI flag 2, >= 8 regions), BAR0 (index 0) and CONFIG (index 7) region info
+fn info to void
+di = int get fds 2
+if ne vfioctl di uint 15211 dinfo 0 24 0
+fail 10 10
+end
+df = le32 4 0
+nr = le32 8 0
+r = write 1 ldev 0 len ldev
+hex df false false
+r = write 1 lreg 0 len lreg
+hex nr false false
+r = write 1 lirq 0 len lirq
+hex le32 12 0 false true
+if or eq and df 2 0 lt nr 8
+fail 10 10
+end
+put rbar 8 0
+if ne vfioctl di uint 15212 rbar 0 32 0
+fail 10 10
+end
+put rcfg 8 7
+if ne vfioctl di uint 15212 rcfg 0 32 0
+fail 10 10
+end
+bf = le32 4 1
+bs = le64 16 1
+r = write 1 lbar 0 len lbar
+hex bf false false
+r = write 1 lsize 0 len lsize
+hex bs true false
+r = write 1 loff 0 len loff
+hex le64 24 1 true true
+r = write 1 lcfg 0 len lcfg
+hex le64 24 2 true true
+if or eq and bf 1 0 lt bs 4096
+fail 10 10
+end
+end
+note stage 5: config identity through pread of the CONFIG region (reads only)
+fn config to void
+di = int get fds 2
+co = le64 24 2
+r = write 1 lvd 0 len lvd
+hex readcfg di co 0 false true
+r = write 1 lcls 0 len lcls
+hex readcfg di co 8 false true
+r = write 1 lsub 0 len lsub
+hex readcfg di co 44 false true
+end
+note stage 6: BOOT registers by pread of BAR0, then through the read-only map; release in reverse order
+fn boot to int
+di = int get fds 2
+bo = le64 24 1
+p0 = readcfg di bo 0
+p1 = readcfg di bo 4
+p42 = readcfg di bo 2560
+h = vfiomap di rbar 0 32
+if lt h 0
+r = write 2 emap 0 len emap
+hex ulong neg h false true
+exit 12
+end
+m0 = mapget h 0 4
+m1 = mapget h 4 4
+m42 = mapget h 2560 4
+r = write 1 lb0 0 len lb0
+r = write 1 lmap 0 len lmap
+hex m0 false false
+r = write 1 lpre 0 len lpre
+hex p0 false true
+r = write 1 lb1 0 len lb1
+r = write 1 lmap 0 len lmap
+hex m1 false false
+r = write 1 lpre 0 len lpre
+hex p1 false true
+r = write 1 lb42 0 len lb42
+r = write 1 lmap 0 len lmap
+hex m42 false false
+r = write 1 lpre 0 len lpre
+hex p42 false true
+if eq get nums 4 1
+r = write 1 lx 0 len lx
+r = write 1 xarg 0 get nums 2
+r = write 1 lxe 0 len lxe
+r = write 1 lmap 0 len lmap
+hex mapget h get nums 3 4 false true
+end
+r = mapdrop h
+r = fclose di
+r = fclose int get fds 1
+r = fclose int get fds 0
+r = write 1 ldone 0 len ldone
+if eq m0 4294967295
+r = write 2 eones 0 len eones
+ret 11
+end
+if or or ne m0 p0 ne m1 p1 ne m42 p42
+r = write 2 emis 0 len emis
+ret 13
+end
+ret 0
+end
+fn main to int
+args
+sysfs
+single
+attach
+info
+config
+ret boot
+end
