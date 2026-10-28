@@ -89,8 +89,9 @@ bindata tables, and writes `fmc.img`, `fmc.hash`, `fmc.pubkey`, `fmc.sig`, `bl.i
 
 The hardware backing assumption is now explicit: `mmwinit` keeps the simulator array; `mmwalloc` owns
 shared anonymous `mapnew` memory and CPU accesses use the live handle plus offset. The IOVA, CPU base
-and GPU VA are distinct. `mmwdmap` maps before `mmwpublish`; a never-published window unmaps its whole
-recorded extent before dropping backing. Epoch checks refuse stale users. Publication is sticky:
+and GPU VA are distinct. `mmwdmap` maps before `mmwpublish`; a DMA-mapped, never-published window
+unmaps its whole recorded extent before dropping backing. Never-mapped backing drops directly.
+Epoch checks refuse stale users. Publication is sticky:
 timeouts, uncertain mapping/completion and partial/unexpected unmap results quarantine backing.
 No documented idle-proof API exists, so published/quarantined backing cannot be reclaimed or reset.
 The caller exclusively owns container/process lifetime; this is not crash-safe containment.
