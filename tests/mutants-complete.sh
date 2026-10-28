@@ -19,7 +19,6 @@ progress check operator flipped|if gt prog inflight|if ge prog inflight
 stale observation accepted as pending|ret CMESTALE|ret 0
 capability check for DMA window bypassed|if or lt get mmwst 0 MMWDMA ge get mmwst 0 MMWQUAR|if false
 quarantine on timeout skipped|r = gmquar b|r = GMOK
-window quarantine on timeout skipped|r = mmwquar get cmgen c|r = MMOK
 cmsub overcapacity check bypassed|if gt count sub sub ent 1 inflight|if false
 EOF
 

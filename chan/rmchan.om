@@ -123,14 +123,14 @@ put rmpid 0 0
 put rmslot 0 GMNONE
 ret RMOK
 end
-fn rmcfg cli ulong dev ulong sub ulong vas ulong tsg ulong ctx ulong to void
+fn rmcfg cli ulong dev ulong sdev ulong vas ulong tsg ulong ctx ulong to void
 if ne get rmst 0 RMSIDLE
 put rmrc 0 RMESTATE
 ret
 end
 put rmhcli 0 cli
 put rmhdev 0 dev
-put rmhsub 0 sub
+put rmhsub 0 sdev
 put rmhvas 0 vas
 put rmhtsg 0 tsg
 put rmhctx 0 ctx
@@ -423,10 +423,12 @@ put rmst 0 RMSREADY
 ret 1
 end
 if eq s RMSSCHED
+put chopen get rmslot 0 1
 put rmst 0 RMSACTV
 ret 1
 end
 if eq s RMSDIS
+put chopen get rmslot 0 2
 put rmst 0 RMSDRAIN
 ret 1
 end
@@ -504,7 +506,7 @@ end
 if ne get mmwgen 0 gen
 ret RMEGEN
 end
-if or eq get chopen c 0 ne get chepoch c gen
+if or ne get chopen c 2 ne get chepoch c gen
 ret RMEBIND
 end
 in = get chin c
@@ -580,7 +582,7 @@ end
 if ne get mmwst 0 MMWPUB
 ret RMESTATE
 end
-if or eq get chopen c 0 ne get chepoch c get mmwgen 0
+if or ne get chopen c 1 ne get chepoch c get mmwgen 0
 ret RMESTATE
 end
 st = get cmst c
@@ -593,7 +595,7 @@ end
 if not gmlive get cmbuf c
 ret RMEBIND
 end
-if ne get cmbgen c get gmbgen get cmbuf c
+if ne get cmbgen c ulong get gmbgen get cmbuf c
 ret RMEGEN
 end
 if not gmlive pb
@@ -607,8 +609,22 @@ end
 if or ne p get chput c ne get cmret c get chret c
 ret RMEBIND
 end
-note Preflight the entire caller-encoded PB before making its ring entry visible.
-if or ne and off 3 0 lt n CMCWDS
+r = rmtail c pb off n
+if ne r RMOK
+ret r
+end
+r = chsubmit c pb off n
+if ne r CHOK
+ret r
+end
+note No fallible checks after publication: the preflight proves cmsub(c,1)'s predicates.
+put cmput c add p uint 1
+put cmst c CMSACTV
+ret RMOK
+end
+note Pure submission preflight; immutable backing is read before the ring entry is published.
+fn rmtail c ulong pb ulong off uint n uint to long
+if or ne and off 3 0 lt n uint CMCWDS
 ret RMEINVAL
 end
 if gt n CHLENMX
@@ -622,22 +638,17 @@ va = add get gmbva pb ulong off
 if ge va CHVALIM
 ret RMERANGE
 end
-r = cmrel 0 get cmva c add p uint 1
+r = cmrel 0 get cmva c add get cmput c uint 1
 if ne r long CMCWDS
 ret RMEBIND
 end
-tail = add add get gmbpa pb ulong off sub bytes mul CMCWDS 4
+va = add get gmbpa pb ulong off
+va = add va bytes
+va = sub va mul CMCWDS 4
 for i ulong CMCWDS
-if ne uint mmrd32 add tail mul i 4 get cmwds i
+if ne uint mmrd32 add va mul i 4 get cmwds i
 ret RMEBIND
 end
 end
-r = chsubmit c pb off n
-if ne r CHOK
-ret r
-end
-note No fallible checks after publication: the preflight proves cmsub(c,1)'s predicates.
-put cmput c add p uint 1
-put cmst c CMSACTV
 ret RMOK
 end

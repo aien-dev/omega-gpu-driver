@@ -5,8 +5,6 @@ note Prints, per case, what tests/dispatch_ref.c prints for the C reference on t
 note == name rc=RC state=S dead=D why=WHY delays=CALLS/US core=CALLS ops=OP,.. save=%#x,..(8) nlog=N violations=N
 note then the register log, one "W|R %06x %08x" line per access.
 note Host only, mode 0 only. Never touches real hardware.
-const LOGMAX ulong 1024
-const M32 ulong 4294967295
 text zqtx "== | rc=| state=| dead=| why=| delays=| core=| ops=| save=| nlog=| violations=|"
 global zqin uchar 262144
 global zqn ulong 1
@@ -228,7 +226,7 @@ zqsdec rc
 zqfr 2
 zqdec get bstate 0
 zqfr 3
-zqdec get rqdead 0
+zqdec ulong get rqdead 0
 zqfr 4
 if eq get dspwl 0 0
 zqch 45

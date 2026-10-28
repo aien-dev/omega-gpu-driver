@@ -36,7 +36,7 @@ static void freeobj(uint32_t obj)
 { printf("req %u cli=%u obj=%u\n",NV_VGPU_MSG_FUNCTION_FREE,cli,obj); }
 int main(void)
 {
- cap(30,-1); cap(31,-10); cap(32,0); cap(33,-3); cap(34,-4); cap(35,-3);
+ cap(30,-1); cap(31,-10); cap(29,-5); cap(32,0); cap(33,-3); cap(34,-4); cap(35,-3);
  step(1,1,NV_VGPU_MSG_FUNCTION_GSP_RM_ALLOC,0);
  puts("seq 1 rc=2 st=11"); puts("seq 2 rc=2 st=11");
  puts("seq 3 rc=-10 st=11"); puts("seq 4 rc=0 st=10");

@@ -1,0 +1,50 @@
+note Serialized caller pump. useRM selects protocol owner, not authority or a production capability.
+note Caller still supplies exact guest/static inputs, object handles and explicit schedule/drain actions.
+note CPU_SEQUENCER is executed through dispatch, never acknowledged by setting success without effects.
+note No automatic retry, firmware choice, hardware start, queue reset, mapping close or backing reclaim.
+fn drvseq useRM bool to long
+d = dspauto
+if lt d 0
+if useRM
+r = rmlose get rmepoch 0
+end
+ret d
+end
+ret 2
+end
+fn drvstep useRM bool to long
+if eq get bstate 0 11
+ret drvseq useRM
+end
+r = long 0
+if useRM
+r = rmstep
+else
+r = bpoll
+end
+if eq r 2
+ret drvseq useRM
+end
+ret r
+end
+note Pure input adapter for existing gspboot. Does NOT call gspboot or authorize its hardware effects.
+note appVersion comes from caller-validated firmware metadata, never invented by this arena encoder.
+fn drvprep ver uint b0 ulong b1 ulong b2 ulong b3 ulong to long
+if not qtcheck
+ret -6
+end
+if or eq get arclen 0 0 gt get arclen 0 1024
+ret -1
+end
+for i ulong get arclen 0
+put gpkt i get arcot i
+end
+put gin 0 get arclen 0
+put gin 1 araddr 15
+put gin 2 ulong ver
+put gin 3 b0
+put gin 4 b1
+put gin 5 b2
+put gin 6 b3
+ret 0
+end

@@ -140,7 +140,23 @@ put chud c GMNONE
 put chin c GMNONE
 ret CHENOMEM
 end
+note Separate backing preparation from RPC allocation/scheduling; state2 cannot submit.
 fn chcreate c ulong chid uint rl uint ent uint to long
+r = chprep c chid rl ent
+if ne r CHOK
+ret r
+end
+if ne chbindop c 0
+r = gmfree get chin c
+r = gmfree get chud c
+r = gmfree get chgp c
+put chopen c 0
+ret CHEBIND
+end
+put chopen c 1
+ret CHOK
+end
+fn chprep c ulong chid uint rl uint ent uint to long
 if or not mmwmutable ne get gmepoch 0 get mmwgen 0
 ret CHESTATE
 end
@@ -204,17 +220,11 @@ ret chnomem c
 end
 put chrl0 c get chrlo 0
 put chrl1 c get chrlo 1
-if ne chbindop c 0
-r = gmfree get chin c
-r = gmfree get chud c
-r = gmfree get chgp c
-ret CHEBIND
-end
-put chopen c 1
+put chopen c 2
 ret CHOK
 end
 fn chsubmit c ulong pb ulong off uint n uint to long
-if or ge c CHSLOTS eq get chopen c 0
+if or ge c CHSLOTS ne get chopen c 1
 ret CHESTATE
 end
 if ne get chepoch c get mmwgen 0

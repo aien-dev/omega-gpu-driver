@@ -143,6 +143,12 @@ int main(void)
             buf[i] = (uint32_t)w;
             p += off;
         }
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+        if (*p != '\0') {
+            fprintf(stderr, "dispatch_ref: trailing words (m does not cover the line): %s\n", line);
+            free(buf);
+            return 2;
+        }
 
         struct ck_gspsim_cfg cfg;
         memset(&cfg, 0, sizeof cfg);

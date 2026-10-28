@@ -61,14 +61,26 @@ ret -1
 end
 c = get arcmd 0
 s = get arstat 0
-if or gt c sub get mmws 0 RQQSZ gt s sub get mmws 0 RQQSZ
+if gt c sub get mmws 0 RQQSZ
 ret -1
 end
-if or ne rem c RQSLOT 0 ne rem s RQSLOT 0
+if gt s sub get mmws 0 RQQSZ
 ret -1
 end
-if not or le add c RQQSZ s le add s RQQSZ c
+if ne rem c RQSLOT 0
 ret -1
+end
+if ne rem s RQSLOT 0
+ret -1
+end
+if lt c s
+if gt add c RQQSZ s
+ret -1
+end
+else
+if gt add s RQQSZ c
+ret -1
+end
 end
 if not rqshape 0
 ret -1
@@ -90,6 +102,22 @@ put qtbar 0 bar
 put qtpend 0 0
 put qtstate 0 1
 ret 0
+end
+fn qtxcopy wr ulong e ulong to long
+h = get mmwh 0
+for i ulong e
+slot = rem add wr i RQCOUNT
+o = add get qtcmd 0 mul add slot 1 RQSLOT
+r = mapwrite h o rqtmp mul i RQSLOT RQSLOT
+if ne r long RQSLOT
+ret -6
+end
+end
+ret 0
+end
+fn qtpub wr ulong e ulong to long
+p = rem add wr e RQCOUNT
+ret mapset get mmwh 0 add get qtcmd 0 16 4 p
 end
 fn qtsend f ulong n ulong p ulong sync bool to long
 if not qtcheck
@@ -124,17 +152,13 @@ end
 wr = get rqpwr 0
 e = get rqpcnt 0
 token = get rqptok 0
-for i ulong e
-slot = rem add wr i RQCOUNT
-o = add get qtcmd 0 mul add slot 1 RQSLOT
-r = mapwrite h o rqtmp mul i RQSLOT RQSLOT
-if ne r long RQSLOT
+r = qtxcopy wr e
+if ne r 0
 qtlose
-ret -6
-end
+ret r
 end
 note Leading DSB SY of this exact aligned store orders copied slot bytes before pointer publication.
-r = mapset h add get qtcmd 0 16 4 rem add wr e RQCOUNT
+r = qtpub wr e
 if ne r 0
 qtlose
 ret -6

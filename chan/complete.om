@@ -147,7 +147,7 @@ ret rc
 end
 pa = add get gmbpa b ulong off
 for i ulong 6
-mmwr32 add pa mul i 4 get cmwds i
+mmwr32 add pa mul i 4 ulong get cmwds i
 end
 ret long CMCWDS
 end
@@ -216,7 +216,7 @@ pa = add get gmbpa slot ulong off
 va = add get gmbva slot ulong off
 put cmgen c gen
 put cmbuf c slot
-put cmbgen c get gmbgen slot
+put cmbgen c ulong get gmbgen slot
 put cmpa c pa
 put cmva c va
 put cmret c get chput c
@@ -243,7 +243,7 @@ b = get cmbuf c
 if not gmlive b
 ret CMESTATE
 end
-if ne get cmbgen c get gmbgen b
+if ne get cmbgen c ulong get gmbgen b
 ret CMEGEN
 end
 ent = get chent c
@@ -289,7 +289,7 @@ b = get cmbuf c
 if not gmlive b
 ret CMESTATE
 end
-if ne get cmbgen c get gmbgen b
+if ne get cmbgen c ulong get gmbgen b
 ret CMEGEN
 end
 pa = get cmpa c
@@ -328,7 +328,7 @@ b = get cmbuf c
 if not gmlive b
 ret CMESTATE
 end
-if ne get cmbgen c get gmbgen b
+if ne get cmbgen c ulong get gmbgen b
 ret CMEGEN
 end
 if or ne get cmput c get chput c ne get cmret c get chret c
@@ -355,12 +355,8 @@ put cmst c CMSIDLE
 ret CMOK
 end
 put cmst c CMSTOUT
-if ne b GMNONE
+note b is live under a published owned window: gmquar retires it AND quarantines the window (gmretire).
 r = gmquar b
-end
-if eq get mmwst 0 MMWPUB
-r = mmwquar get cmgen c
-end
 put cmst c CMSQST
 ret CMETIME
 end

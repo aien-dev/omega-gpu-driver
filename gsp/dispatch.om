@@ -64,21 +64,11 @@ shf = sub op SQCRST
 bit = shl ulong 1 shf
 ret ne and get dspperm 0 bit 0
 end
+note Caller dspseq already refused empty, over-capacity and out-of-range cmdIndex before dspunpk;
+note sqrun refuses an over-limit poll budget before its first effect.
 fn dspprev nw ulong ci ulong to long
 put dspops 0 0
 put dspcore 0 0
-if eq nw 0
-ret SQEEMP
-end
-if ge ci nw
-ret SQEIDX
-end
-if gt nw SQMAX
-ret SQECAP
-end
-if gt get sqbud 0 SQBMAX
-ret SQEBUD
-end
 i = ulong 0
 while lt i ci bound 999999
 op = sqw i
@@ -120,36 +110,36 @@ if ne tok get btoken 0
 ret DSPEORD
 end
 if ne get gspmode 0 0
-bseqdone gen tok false
+z = bseqdone gen tok false
 put dspstat 0 SQENOC
 ret SQENOC
 end
 nw = dspu32 80
 ci = dspu32 84
 if lt get bselen 0 add 120 mul nw 4
-bseqdone gen tok false
+z = bseqdone gen tok false
 put dspstat 0 DSPEPKT
 ret DSPEPKT
 end
 if eq nw 0
-bseqdone gen tok false
+z = bseqdone gen tok false
 put dspstat 0 SQEEMP
 ret SQEEMP
 end
 if gt nw SQMAX
-bseqdone gen tok false
+z = bseqdone gen tok false
 put dspstat 0 SQECAP
 ret SQECAP
 end
 if ge ci nw
-bseqdone gen tok false
+z = bseqdone gen tok false
 put dspstat 0 SQEIDX
 ret SQEIDX
 end
 dspunpk nw
 r = dspprev nw ci
 if ne r 0
-bseqdone gen tok false
+z = bseqdone gen tok false
 put dspstat 0 r
 ret r
 end
@@ -158,7 +148,7 @@ put sqsave k dspu32 add 88 mul k 4
 end
 r = sqrun nw ci
 if ne r 0
-bseqdone gen tok false
+z = bseqdone gen tok false
 put dspstat 0 r
 ret r
 end

@@ -20,7 +20,9 @@ free sequence inverted|r = brmfree get rmhcli 0 get rmhctx 0 b|r = brmfree get r
 rebinding retained RM slot permitted|if or ne get rmst 0 RMSIDLE ne get rmepoch 0 0|if false
 RM free before semaphore drain permitted|if ne st RMSDRND|if false
 publication active state check bypassed|if ne get rmst 0 RMSACTV|if false
-submission stale release sequence accepted|if ne uint mmrd32 add tail mul i 4 get cmwds i|if false
+submission stale release sequence accepted|if ne uint mmrd32 add va mul i 4 get cmwds i|if false
+schedule ACK leaves channel only prepared|put chopen get rmslot 0 1|note no activation
+RM bind accepts a channel that is not prepared|if or ne get chopen c 2 ne get chepoch c gen|if ne get chepoch c gen
 EOF
 
 killed=0; survived=0; invalid=0; total=0

@@ -203,7 +203,8 @@ put rtpb 0 get gmout 0
 put chent 0 1024
 put chchid 0 0
 put chepoch 0 get mmwgen 0
-put chopen 0 1
+note chprep state: backing prepared, not schedulable until the schedule ACK.
+put chopen 0 2
 note DMA state is injected HOSTMODEL capability input only, never a successful DMA ioctl.
 put mmwst 0 MMWDMA
 end
@@ -216,6 +217,10 @@ rmcfg 3254779905 3254779906 3254779907 3254779912 3254779913 3254779914
 rmcfgch 3254779915 0 1 42
 prcap 30 rmbind 4 get mmwgen 0
 prcap 31 rmbind 0 add get mmwgen 0 1
+note An already active (submit-ready) channel is not a prepared backing; RM bind refuses it.
+put chopen 0 1
+prcap 29 rmbind 0 get mmwgen 0
+put chopen 0 2
 prcap 32 rmbind 0 get mmwgen 0
 prcap 33 rmbind 0 get mmwgen 0
 ck cmbind 0 get rtsem 0 0 get mmwgen 0 CMOK

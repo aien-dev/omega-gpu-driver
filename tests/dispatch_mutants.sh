@@ -11,7 +11,7 @@ t=$(mktemp -d /tmp/mutants-dispatch.XXXXXX) || exit 2
 trap 'rm -rf "$t"' EXIT
 
 cat > "$t/list" <<'EOF'
-prevalidation bypassed|r = dspprev nw ci|r = 0
+prevalidation bypassed|r = dspprev nw ci|r = long 0
 stale generation check disabled|if ne gen get bgen 0|if false
 stale token check disabled|if ne tok get btoken 0|if false
 suspended state check disabled|if ne get bstate 0 11|if false
@@ -22,7 +22,6 @@ core permission check disabled in prevalidation|if not dspcperm op|if false
 store save index check disabled in prevalidation|if ge k SQSAVE|if false
 bseqdone ok=false on success|d = bseqdone gen tok true|d = bseqdone gen tok false
 save register writeback dropped|dspp32 add 88 mul k 4 get sqsave k|note no writeback
-poll budget check disabled in prevalidation|if gt get sqbud 0 SQBMAX|if false
 non-sim whole-dispatch refusal disabled|if ne get gspmode 0 0|if false
 EOF
 

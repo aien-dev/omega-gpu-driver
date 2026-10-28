@@ -57,7 +57,7 @@ if ! cmp -s "$t/c.cases" "$t/o.cases"; then
   echo "dispatch_diff: cases output differs (C left, .om right)"; diff -u "$t/c.cases" "$t/o.cases" | head -20; fail=1
 fi
 
-want=$(grep -vc '^#' "$cases")
+want=$(grep -Evc '^(#|[[:space:]]*$)' "$cases")
 n=$(grep -c '^== ' "$t/o.cases")
 if [ "$n" -ne "$want" ] || [ "$(tail -n 1 "$t/o.cases")" != "exit 0" ]; then
   echo "dispatch_diff: ran $n of $want cases"; tail -n 1 "$t/o.cases"; fail=1

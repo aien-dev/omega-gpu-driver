@@ -14,11 +14,11 @@ valid-allcore 0 4 1 0 15 0 0 11 0 0 5 4 4 5 6 7 8
 valid-mixed 0 4 1 0 15 0 0 11 0 0 20 19 19 0 8653504 255 1 8653504 15 160 3 5 4 8653504 2 5 2 8653504 255 240 0 0
 
 # 2. Malformed late opcode with ZERO side effects (full prevalidation proof)
-late-unkop 0 4 1 0 15 0 0 11 0 0 6 5 5 0 8653504 100 4 8653504 1 99
-late-badstore 0 4 1 0 15 0 0 11 0 0 6 5 5 0 8653504 100 4 8653504 8
-late-overrun 0 4 1 0 15 0 0 11 0 0 5 4 4 0 8653504 100 1 8653504
-late-corenoc 0 4 0 0 15 0 0 11 0 0 5 4 4 0 8653504 100 4 8653504 1 5
-late-noperm 0 4 1 0 7 0 0 11 0 0 5 4 4 0 8653504 100 4 8653504 1 8
+late-unkop 0 4 1 0 15 0 0 11 0 0 8 7 7 0 8653504 100 4 8653504 1 99
+late-badstore 0 4 1 0 15 0 0 11 0 0 7 6 6 0 8653504 100 4 8653504 8
+late-overrun 0 4 1 0 15 0 0 11 0 0 6 5 5 0 8653504 100 1 8653504
+late-corenoc 0 4 0 0 15 0 0 11 0 0 8 7 7 0 8653504 100 4 8653504 1 5
+late-noperm 0 4 1 0 7 0 0 11 0 0 8 7 7 0 8653504 100 4 8653504 1 8
 
 # 3. Token / generation stale or invalid bstate (zero side effects, no quarantine)
 stale-gen 0 4 0 0 15 1 0 11 0 0 4 3 3 0 8653504 2748

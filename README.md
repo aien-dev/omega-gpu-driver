@@ -85,6 +85,9 @@ reference byte for byte, and each mutant script changes one line at a time and r
 | `chan/params.om` (RM alloc/control records for GSP-RM, NVIDIA 580.173.02 layouts) | NVIDIA headers | `tests/params_diff.sh` | `tests/mutants-chan.sh` |
 | `gsp/rpc.om`, `gsp/boot.om` (SWAP_RX transport frames, boot handshake, correlated RM transactions and quarantine; replay only) | `dev/gb10_gsp_boot.c` and pinned vendor protocol | `tests/rpc_diff.sh` | `tests/mutants-rpc.sh` |
 | `gsp/arena.om`, `gsp/connect.om` (bounded WPR/libos/log/radix/FMC/COT composition and preboot queue attachment) | `dev/gb10_gsp_boot.c` | `tests/arena_diff.sh` | `tests/mutants-arena.sh` |
+| `gsp/profile.om`, `gsp/transport.om`, `gsp/notify.om`, `gsp/service.om` (checked mapped queue mechanism and caller pump; not production admission) | pinned vendor SWAP_RX/notification plus explicit host peer | `tests/transport_host.sh` | compiling transport/notification/service mutants plus generated-fence checker negative control |
+| `gsp/dispatch.om` (whole-stream prevalidation and explicit host sequencer execution; hardware refusal) | pinned vendor sequencer plus aienux sequencer | `tests/dispatch_diff.sh` | `tests/dispatch_mutants.sh` |
+| `chan/complete.om`, `chan/rmchan.om` (semaphore progress and async RM lifecycle; no global idle proof) | pinned NVIDIA headers and independent C referee | `tests/complete_diff.sh`, `tests/rmchan_diff.sh` | `tests/mutants-complete.sh`, `tests/mutants-rmchan.sh` |
 
 `fwprep FWFILE OGKMSRC OUTDIR` reads the signed `gsp_ga10x.bin` (unchanged) and the NVIDIA open-source
 bindata tables, and writes `fmc.img`, `fmc.hash`, `fmc.pubkey`, `fmc.sig`, `bl.img` and, last,
@@ -202,16 +205,32 @@ is preserved. Semantic RPC rejection can occur after transport consumption and q
 rolling back an already published cursor. Notification failure after publication is uncertain, not
 an unsent request eligible for retry. Bound mappings remain retained on timeout/error.
 
+`gsp/service.om` supplies `drvstep useRM`, a serialized pump that dispatches suspended sequencer
+events before allowing either boot or RM policy to continue. `drvprep appVersion b0 b1 b2 b3`
+copies the exact composed COT/FMC-argument inputs into the existing MMIO boot sequencer's input
+buffers. It neither calls that sequencer nor authorizes device effects; firmware appVersion is
+validated caller input. No host fixture invokes hardware mode, and no production resolver is added.
+
 The pinned process compiler brackets each aligned `mapget`/`mapset` with DSB SY. This orders accesses
 but does not establish cache coherency, memory attributes, cache maintenance, interrupt delivery or
 device completion. Bulk mapread/mapwrite are ordinary copies, never cursor accesses. Host peers and
 instruction inspection cannot qualify those device properties. A fatal mapping fault is not a
 recoverable status and process-local quarantine is not crash-safe containment.
 
+The host receipt for the mapped transport, sequencer dispatch, RM channel and completion slices is
+`tests/transport-host-receipt.txt` (all 27 `tests/*.sh` scripts, exact hashes and tool versions).
+`tests/window_sim.sh` needs `build/omc` to be the compiler named in `tools/omc.pin`.
+
 `chan/rmchan.om` connects the existing allocation codecs to async RM hierarchy/schedule/disable/free;
 `chan/complete.om` uses Blackwell completion-semaphore releases, never nonexistent USERD GPGet.
+`chprep` allocates and encodes channel backing only (state 2, prepared): `rmbind` accepts only a
+prepared channel, the schedule ACK alone makes it submit-ready (state 1), and the disable ACK
+returns it to prepared. `chcreate` keeps the legacy simulator bind, which refuses an owned map.
 Drained host tracking is not proof that GSP stopped accessing the boot arena and never authorizes its
-reclamation. Production core sequencer effects refuse regardless of host permission flags.
+reclamation. Hardware sequencer dispatch refuses regardless of host permission flags: a typed
+MMIO lease/span and engine-specific core effects are absent from this pin. Completion semaphore
+progress alone is not cache/engine completion: the vendor WFI/membar sequence is a separate required
+effect boundary, not supplied by a CPU fence or inferred from an observed semaphore value.
 
 The current compiler profile is Linux-process ELF/VFIO, not Linux kernel code. A Linux-hosted `.om`
 user-space driver could replace NVIDIA modules while retaining Linux VFIO/IOMMU services; that is not
