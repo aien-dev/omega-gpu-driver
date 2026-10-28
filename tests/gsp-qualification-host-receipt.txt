@@ -1,0 +1,81 @@
+2026-10-28 QualGspBoot: IMPLEMENTED / HOST_EXERCISED, NOT QUALIFIED
+Base: b1c8e6ea76da81dc47b57670304bf256b0ba9818 (driver draft #4)
+Compiler source: omega-mv 397e67040fb74853c6814097fe02ae4e1ebd6f66, per tools/omc.pin
+OMC sha256: bcfa582892afca8f65e551fe56867d918d86e84540c7381be8fa9ef18d0cf0f6
+Vendor: NVIDIA open-gpu-kernel-modules 580.173.02, 20e4e6e19cc26ba47b5cbe23130a396be100c427
+C reference: aienux #463 a108b1144a064aa7b824374a622d627c6ba91fd1
+Verification-only dependencies: cc Ubuntu 13.3.0-6ubuntu2~24.04.1 (13.3.0), Python 3.12.3.
+No new host dependency was added to production. No hardware effects were exercised.
+
+Deliberate correction: the c5bb3a4 C reference and Omega both used 0xc0000000 for
+GB10B MCTP. Vendor ksec2CreateMctpHeader_539ab4 returns 1. The new C reference
+has that fix; arena_diff.sh pins it intentionally. rpc_diff.sh uses the same
+reference revision for the combined suite. Historical receipts remain unchanged.
+
+Actual host command for each tests/*.sh, sequentially, in private worktree:
+OMC=/tmp/omega-driver-boot/build/omc
+AIENUX=/home/drakestapleton/work/aienux-gsp-oracle-full
+OGKM=/home/drakestapleton/work/nvidia-gsp-vendor
+OGKM_SRC=$OGKM/src
+export OMC AIENUX OGKM OGKM_SRC
+nice -n 19 sh /home/drakestapleton/work/ogd-qual-gsp/tests/<script>
+The window simulator additionally needs build/omc -> the same pinned OMC.
+No physical window/preflight script was run outside tests/window_sim.sh.
+
+Initial run: 26 exit0, mutants-arena exit1 (redundant profile-package guard let
+the original profile mutant survive); window_sim exit1 (private build/omc absent).
+Fixed the mutant's exercised guard while preserving production behavior; linked
+the pinned compiler. Retained both original failed logs. Reran arena_diff,
+mutants-arena, sec2_host and window_sim; added and ran mutants-sec2. Final:
+arena_diff.sh: exit0
+boot_dma.sh: exit0
+chan_diff.sh: exit0
+complete_diff.sh: exit0
+dispatch_diff.sh: exit0
+dispatch_mutants.sh: exit0
+dma_host.sh: exit0
+fw_diff.sh: exit0
+mmio_diff.sh: exit0
+mutants-arena.sh: exit0
+mutants-chan.sh: exit0
+mutants-complete.sh: exit0
+mutants-fw.sh: exit0
+mutants-mmio.sh: exit0
+mutants-rmchan.sh: exit0
+mutants-rpc.sh: exit0
+mutants-sec2.sh: exit0
+mutants-seq.sh: exit0
+mutants-sysinfo.sh: exit0
+mutants-window.sh: exit0
+params_diff.sh: exit0
+pm_gate.sh: exit0
+rmchan_diff.sh: exit0
+rpc_diff.sh: exit0
+sec2_host.sh: exit0
+seq_diff.sh: exit0
+sysinfo_diff.sh: exit0
+transport_host.sh: exit0
+window_sim.sh: exit0
+
+Negative control observed: mutants-arena: DETECTED old-mctp
+All 13 arena mutants detected; behavior failures, not compile failures.
+GB20B host cases 0..14 all PASS: clean boot completion, package mismatch,
+wrong chip, secure-boot timeout, missing response, bad vendor/header,
+firmware error, pointer mismatch, short response, GB10B header/version,
+three arena package-family mismatches, delayed ready/response at budget.
+All six compiling SEC2 mutants detected: secure-wait, response-wait, package,
+response-vendor, response-error, pointer.
+GB20B synthetic fixture is NOT an authenticated extracted GB20B firmware image.
+
+Final arena assembly sha256: 91964e37477bfacf79250e9d5cc1eaa1eb3ef8e59ed7ee310998218036f5afda
+Final arena replay sha256: 3cb9ca9837b543cee0bcb5cfce56841cdfc371b65e3b82c1063855f14121fd6d
+Corrected C arena referee sha256: de2d3574261dd166a7e2aed05a96ae78e413b2428d0fe0396d3552fb2109dee8
+GB20B assembly sha256: dd52d251649f39d269c1616f79c490f3286b2746451ee6d881515ab77db9faf9
+GB20B replay sha256: 20dd721a556e65bedb101e624fc2fb13cac5ab3191174254a6dbcdc5d9fad7a1
+Local full raw logs: /home/drakestapleton/handoffs/spark-five-20261028/QualGspBoot/
+Original host-suite.txt; final host-suite-final.txt; repaired gate logs end -final.log.
+
+NOT_RUN: physical BOOT_42 identity in this work, firmware load/boot, live GSP RPC,
+resources/queue/compute on hardware, native Aienux effect seam, restore after FLR/SBR.
+No service/module/VFIO/boot/credential/gate changes, merge or deployment performed.
+GB20B.md records the composed-launcher gap and the exact unexecuted W0-only request.

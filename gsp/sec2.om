@@ -1,0 +1,172 @@
+note GB20B SEC2 COTv2 exchange, NVIDIA580.173.02@20e4e6e kernel_sec2_gb20b.c.
+note Requires mmio.om, profile.om, sim.om and sec2sim.om. No launcher/admission supplied.
+note s2cfg: profile,package,secureBootPollBudget,responsePollBudget,silicon,SEC2present,FMCenabled.
+note Package2 asserts gb20y + GB20B boot/FMC source; not authentication. Warm/resume/CC unsupported.
+note Vendor secure-boot deadline is max(scaled4s,default); caller supplies bounded polls with its OS timer.
+note WolframLanguageEvaluator FromDigits /@ {1B,5E0,840C80,840C84,C0000000,1510DE7E} -> {27,1504,8653952,8653956,3221225472,353427070}; 2^25 ->33554432.
+const S2SCR ulong 1504
+const S2MH ulong 8653952
+const S2MT ulong 8653956
+const S2AINCR ulong 33554432
+global s2cfg ulong 7
+global s2reply uchar 1024
+global s2out ulong 4
+fn s2rd off ulong to ulong
+if eq get gspmode 0 0
+ret s2simrd off
+end
+ret gsprd off
+end
+fn s2wr off ulong v ulong to void
+if eq get gspmode 0 0
+s2simwr off v
+ret
+end
+gspwr off v
+end
+fn s2wait kind ulong budget ulong to bool
+for i ulong add budget 1
+if eq kind 0
+if eq s2rd S2SCR 255
+put s2out 0 i
+ret true
+end
+else
+h = s2rd S2MH
+t = s2rd S2MT
+if ne h t
+put s2out 1 i
+ret true
+end
+end
+if lt i budget
+gsppause
+end
+end
+ret false
+end
+fn s2get o ulong to ulong
+v = ulong 0
+for i ulong 4
+v = or v shl ulong get s2reply add o i mul i 8
+end
+ret v
+end
+fn s2save o ulong v ulong to void
+for j ulong 4
+c = and shr v mul j 8 255
+put s2reply add o j uchar c
+end
+end
+fn s2response to long
+h = s2rd S2MH
+t = s2rd S2MT
+if or lt t h gt t 1020
+ret -12
+end
+n = add sub t h 4
+if or lt n 20 ne rem n 4 0
+ret -12
+end
+s2wr S2EMC S2AINCR
+for i ulong div n 4
+v = s2rd S2EMD
+s2save mul i 4 v
+end
+e = ememdw s2rd S2EMC
+note Vendor acknowledges the packet even when its final offset check fails.
+s2wr S2MT h
+s2wr S2MH h
+if ne e div n 4
+ret -12
+end
+note Single-packet response, vendor PCI 10de, SEC2_RESPONSE; payload starts at byte7.
+if ne and s2get 0 3221225472 3221225472
+ret -12
+end
+if ne s2get 4 353427070
+ret -12
+end
+put s2out 2 s2get 8
+put s2out 3 s2get 16
+if ne s2get 12 20
+ret -12
+end
+if ne get s2out 3 0
+ret -13
+end
+ret 0
+end
+fn s2pkt o ulong to ulong
+v = ulong 0
+for i ulong 4
+v = or v shl ulong get gpkt add o i mul i 8
+end
+ret v
+end
+fn s2boot boot42 uint to long
+for i ulong 4
+put s2out i 0
+end
+if or ne gpclass boot42 2 ne get s2cfg 0 2
+ret gspfail EARG
+end
+if ne get s2cfg 1 2
+ret gspfail EARG
+end
+for i ulong 3
+if ne get s2cfg add i 4 1
+ret gspfail EARG
+end
+end
+for i ulong 2
+if gt get s2cfg add i 2 999998
+ret gspfail EARG
+end
+end
+if ne get gin 0 868
+ret gspfail EARG
+end
+note Check complete profile header before any register effects; COT version2,size860 and no FRTS.
+if or ne s2pkt 0 3221225472 ne s2pkt 4 336649854
+ret gspfail EARG
+end
+if ne s2pkt 8 56360962
+ret gspfail EARG
+end
+for i ulong 6
+if ne s2pkt add 20 mul i 4 0
+ret gspfail EARG
+end
+end
+if not gsppm
+ret gspfail EPM
+end
+if not s2wait 0 get s2cfg 2
+ret gspfail -10
+end
+if not pollstep 0
+ret gspfail EBUSY
+end
+s2wr S2EMC AINCW
+for i ulong 217
+v = ulong 0
+for j ulong 4
+v = or v shl ulong get gpkt add mul i 4 j mul j 8
+end
+s2wr S2EMD v
+end
+if ne ememdw s2rd S2EMC 217
+ret gspfail EEMEM
+end
+s2wr S2QT 864
+s2wr S2QH 0
+if not s2wait 1 get s2cfg 3
+ret gspfail -11
+end
+r = s2response
+if ne r 0
+ret gspfail r
+end
+ret gspfinish
+end

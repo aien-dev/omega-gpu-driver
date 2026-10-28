@@ -15,3 +15,14 @@ ret -95
 end
 ret 1
 end
+note Separate classifier; gpchip remains GB10B-only transport admission.
+note GB20B classification does NOT admit GB10B firmware, system_info, or transport.
+fn gpclass boot42 uint to long
+if eq gpchip boot42 1
+ret 1
+end
+if and eq and shr ulong boot42 24 63 27 eq and shr ulong boot42 20 15 11
+ret 2
+end
+ret -95
+end

@@ -36,6 +36,8 @@ global semem ulong 256
 note runtime PM state of the simulated device, set by the caller: 0 active, 1 suspended (D3).
 note siminit leaves it alone. Any access while suspended counts as a violation.
 global spm ulong 1
+note Test-only selected packet family; zero preserves GB10B independent oracle cases.
+global sprof ulong 1
 fn simpmok to bool
 ret eq get spm 0 0
 end
@@ -105,10 +107,15 @@ sp SHWCFG2 3135193511
 sp SS2MB0 0
 sp SLEFT get scfg 0
 end
-note SEC2 checks the packet: MCTP SOM|EOM 0xC0000000, NVDM 0x1410DE7E, payload version 1, size 860,
+note SEC2 checks the GB10B HAL constant MCTP dword 1, NVDM 0x1410DE7E, payload version 1, size 860,
 note TAIL 864. Anything else (SIM-CHOICE): consumed, the target mask is never released.
 fn simpkt to bool
+if eq get sprof 0 2
 a = and eq sg SQTAIL 864 eq get semem 0 3221225472
+b = and eq get semem 1 336649854 eq and get semem 2 65535 2
+ret and and a b eq shr get semem 2 16 860
+end
+a = and eq sg SQTAIL 864 eq get semem 0 1
 b = and eq get semem 1 336649854 eq and get semem 2 65535 1
 ret and and a b eq shr get semem 2 16 860
 end

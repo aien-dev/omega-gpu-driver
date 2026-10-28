@@ -3,14 +3,14 @@
     "generated": {
       "children": [],
       "children_root": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "compiled_at": "2026-10-28T20:33:55Z",
+      "compiled_at": "2026-10-28T23:13:02Z",
       "compiler": "crumb-compile/1",
-      "digest": "sha256:314be256c7b22a0aef9ee883a933b8da619d15508b505fa32be081337726014e",
+      "digest": "sha256:3cbbc9b4085b66ccc70eeb497ccb87c127f7d52cea21e8aa7469e62f9ef8dc9b",
       "evidence_files": 0,
       "evidence_root": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "files": 109,
-      "generated_at_commit": "85bd62a66d8772ec50da54d4a645a252f7ef38f7",
-      "source_tree": "sha256:b1f99f4154825a2e3908ef39ca3359bcabeba8cb0b55c8df9e59661c788c2431"
+      "files": 118,
+      "generated_at_commit": "c70335d4190f146c016821a4f8809c3ef41096ae",
+      "source_tree": "sha256:6b269f2b0dd319d57c3c560141e711527201f15196c43730c28f7d5a7bfaac36"
     }
   },
   "layer": "driver",
@@ -20,6 +20,6 @@
     "repo": "aien-dev/omega-mv",
     "why": "the seeded compiler (omc) and its vfioctl/vfiomap words"
   },
-  "purpose": "Omega GPU driver for the GB10, written in seeded Omega. W0: bind-read-release identity probe over VFIO.",
+  "purpose": "Seeded Omega GPU driver candidate: Linux VFIO W0 identity and host-exercised GB10B/GB20B boot protocol units. Physical boot/RPC/compute NOT_RUN; no native kernel effect seam or composed launcher.",
   "schema_version": "1.0.0"
 }

@@ -7,6 +7,7 @@ python3 - "$R" <<'PY'
 import os, pathlib, subprocess, sys, tempfile
 r=pathlib.Path(sys.argv[1]); original=(r/'gsp/arena.om').read_text()
 mutants=[
+ ('old-mctp','arcput 0 1 4','arcput 0 shl ulong 3 30 4'),
  ('radix','add araddr 11 add get arlvl add i 1 mul j 4096','add araddr 11 add get arlvl add i 1 mul j 4097'),
  ('logpte','v = add a mul j 4096','v = add a mul j 4097'),
  ('sharedpte','add araddr 10 mul i 4096 8','add araddr 10 mul i 4097 8'),
@@ -15,7 +16,7 @@ mutants=[
  ('cotfmc','arcput 28 get arslen 3 4','arcput 28 get arslen 2 4'),
  ('cotargs','arcput 860 araddr 15 8','arcput 860 araddr 9 8'),
  ('preboot','rqsend 72 936 936 false','rqsend 73 936 936 false'),
- ('profile','ne get arcfg 0 1','false'),
+ ('profile','lt get arcfg 0 1','false'),
  ('registry','if ne arreg32 0 n','if false'),
  ('dma','if not ardma get arbase 0 get arused 0','if false'),
  ('heapdma','if not ardma get arcfg 2 get arcfg 3','if false'),

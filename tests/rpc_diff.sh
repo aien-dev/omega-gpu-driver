@@ -3,13 +3,13 @@
 set -eu
 R=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 OMC=${OMC:-$R/build/omc}
-AIENUX=${AIENUX:?set AIENUX to aienux c5bb3a4b9898257658aba0b7178a3c73a0371c27}
+AIENUX=${AIENUX:?set AIENUX to aienux a108b1144a064aa7b824374a622d627c6ba91fd1}
 RPC_OM=${RPC_OM:-$R/gsp/rpc.om}
 BOOT_OM=${BOOT_OM:-$R/gsp/boot.om}
 expected=bcfa582892afca8f65e551fe56867d918d86e84540c7381be8fa9ef18d0cf0f6
 actual=$(sha256sum "$OMC"); actual=${actual%% *}
 [ "$actual" = "$expected" ] || { echo 'rpc_diff: compiler pin mismatch' >&2; exit 2; }
-[ "$(git -C "$AIENUX" rev-parse HEAD)" = c5bb3a4b9898257658aba0b7178a3c73a0371c27 ] || exit 2
+[ "$(git -C "$AIENUX" rev-parse HEAD)" = a108b1144a064aa7b824374a622d627c6ba91fd1 ] || exit 2
 git -C "$AIENUX" diff --quiet HEAD -- native/kernel/dev/gb10_gsp_boot.c native/kernel/dev/gb10_gsp_boot.h || { echo 'rpc_diff: INVALID modified oracle'; exit 2; }
 t=$(mktemp -d /tmp/rpc-replay.XXXXXX)
 trap 'rm -rf "$t"' EXIT HUP INT TERM

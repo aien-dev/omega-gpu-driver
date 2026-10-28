@@ -262,6 +262,10 @@ if not pollstep 1
 put gout 7 gsprd S2MB1
 ret gspfail ESEC2
 end
+ret gspfinish
+end
+note Shared GSP FMC completion, selected only after the profile-specific SEC2 exchange.
+fn gspfinish to long
 if not pollstep 2
 ret gspfail EMASK
 end
