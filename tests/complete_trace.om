@@ -1,0 +1,172 @@
+note tests/complete_trace.om: test trace runner for chan/complete.om.
+note Matches tests/complete_ref.c byte for byte on stdout.
+text ctfrag "cmd | rc=|prog |cap |drain | st=| bst=| wst="
+text cthex "0123456789abcdef"
+global outbuf uchar 256
+global digs uchar 24
+fn prch c uchar to void
+put outbuf 0 c
+r = write 1 outbuf 0 1
+end
+fn prstr k ulong to void
+w = ulong 0
+for i ulong len ctfrag
+c = get ctfrag i
+if eq c 124
+w = add w 1
+else
+if eq w k
+prch c
+end
+end
+end
+end
+fn prdec v long to void
+if lt v 0
+prch 45
+v = sub 0 v
+end
+if eq v 0
+prch 48
+ret
+end
+cnt = ulong 0
+x = ulong v
+while gt x 0 bound 24
+put digs cnt uchar add rem x 10 48
+cnt = add cnt 1
+x = div x 10
+end
+for i ulong cnt
+prch get digs sub sub cnt 1 i
+end
+end
+fn prhex8 v uint to void
+for i ulong 8
+shift = mul sub 7 i 4
+idx = and shr v shift 15
+prch get cthex ulong idx
+end
+end
+fn prcmd id long rc long to void
+prstr 0
+prdec id
+prstr 1
+prdec rc
+if gt rc 0
+for i ulong 6
+prch 32
+prhex8 get cmwds i
+end
+end
+prch 10
+end
+fn prprog id long rc long to void
+prstr 2
+prdec id
+prstr 1
+prdec rc
+prch 10
+end
+fn prcap id long rc long to void
+prstr 3
+prdec id
+prstr 1
+prdec rc
+prch 10
+end
+fn prdrain id long rc long st ulong bst uchar wst ulong to void
+prstr 4
+prdec id
+prstr 1
+prdec rc
+prstr 5
+prdec long st
+prstr 6
+prdec long bst
+prstr 7
+prdec long wst
+prch 10
+end
+fn setupmem to void
+r = mmwalloc 2147483648 1048576
+put mmwgen 0 42
+note HOSTMODEL: real anonymous handle, no VFIO mapping or device publication.
+r = mmasinit get mmwb 0 64
+r = gminit 4 add get mmwb 0 262144 128 8589934592
+r = gmalloc 4096 1 GMHPOLL
+put chent 0 1024
+put chopen 0 1
+put chepoch 0 get mmwgen 0
+put mmwst 0 MMWDMA
+end
+fn main to int
+r = cminit
+if ne r CMOK
+exit 1
+end
+r = cmrel 0 536870912 1
+prcmd 1 r
+r = cmrel 3 4294967300 42
+prcmd 2 r
+r = cmrel 7 34359738368 4294967295
+prcmd 3 r
+r = cmrel 8 536870912 1
+prcmd 4 r
+r = cmrel 0 4097 1
+prcmd 5 r
+r = cmrel 0 0 1
+prcmd 6 r
+r = cmrel 0 add MMVALIM 4 1
+prcmd 7 r
+r = cmacq 1 1073741824 10
+prcmd 8 r
+prprog 10 cmprog 0 10 0
+prprog 11 cmprog 0 10 5
+prprog 12 cmprog 0 10 10
+prprog 13 cmprog 0 10 11
+prprog 14 cmprog 5 10 4
+prprog 15 cmprog 4294967294 3 1
+prprog 16 cmprog 4294967294 3 4294967294
+prprog 17 cmprog 4294967294 3 4
+prprog 18 cmprog 4294967294 3 4294967293
+prprog 19 cmprog 100 100 100
+prprog 20 cmprog 100 100 101
+setupmem
+slot = ulong 0
+gen = ulong 42
+put mmwkind 0 0
+prcap 30 cmbind 0 slot 0 gen
+put mmwkind 0 1
+put mmwst 0 MMWOWN
+prcap 31 cmbind 0 slot 0 gen
+put mmwst 0 MMWDMA
+prcap 32 cmbind 0 slot 0 add gen 1
+put gmbca slot 0
+prcap 33 cmbind 0 slot 0 gen
+put gmbca slot 1
+put gmbfl slot 0
+prcap 34 cmbind 0 slot 0 gen
+put gmbfl slot GMHPOLL
+prcap 35 cmbind 0 slot 1 gen
+prcap 36 cmbind 0 slot 0 gen
+put mmwst 0 MMWPUB
+put chput 0 10
+prcap 38 cmdrain 1 10
+prcap 42 cmsub 0 2000
+prcap 43 cmsub 0 15
+rcsub = cmsub 0 10
+if ne rcsub CMOK
+exit 1
+end
+mmwr32 get cmpa 0 10
+rcdr1 = cmdrain 0 10
+prdrain 40 rcdr1 get cmst 0 get gmbst slot get mmwst 0
+put chput 0 15
+rcsub2 = cmsub 0 5
+rcdr2 = cmdrain 0 3
+prdrain 41 rcdr2 get cmst 0 get gmbst slot get mmwst 0
+prcap 37 cmbind 0 slot 0 gen
+prcap 39 cmsub 0 5
+ret 0
+end
