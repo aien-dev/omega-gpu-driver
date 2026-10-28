@@ -1,0 +1,379 @@
+note gsp/boot.om: replay-only boot/event and one-in-flight RM state machine.
+note Compose rpc.om, sysinfo.om, chan/params.om before this unit. Never calls seq/MMIO or chan hardware ops.
+note States 0 closed,1 prepared,2 sysinfo queued,3 registry done,4 waiting INIT_DONE,
+note 5 guest handshake needed,6 waiting handshake,7 static request needed,8 waiting static,
+note 9 REPLAY_READY,10 waiting RM reply,11 sequencer suspended,12 quarantined.
+note NVIDIA580.173.02 kernel_gsp.c:4261-4274 requires handshake BEFORE static info.
+note Error -10 order, -11 timeout/outcome unknown, -12 remote failure, -13 reply shape/correlation.
+note A poll budget is a caller-fed count, NOT elapsed time. Events never replenish it.
+note Reset is replay image disposal only; never a hardware reset or permission to reclaim DMA.
+global bstate ulong 1
+global bprev ulong 1
+global bgen ulong 1
+global btoken ulong 1
+global bbudget ulong 1
+global bstaticn ulong 1
+global bfunc ulong 1
+global bseq ulong 1
+global bplen ulong 1
+global bhead ulong 4
+global bresult ulong 1
+global bsevent uchar 65536
+global bselen ulong 1
+fn bfail code long to long
+put bstate 0 12
+put rqdead 0 1
+ret code
+end
+fn breset to long
+if eq get bgen 0 RQU32
+ret -10
+end
+rqinit
+put bgen 0 add get bgen 0 1
+put bstate 0 1
+put bbudget 0 0
+put bselen 0 0
+ret 0
+end
+fn bsys to long
+if ne get bstate 0 1
+ret -10
+end
+for i ulong 936
+put rqpay i get siout i
+end
+r = rqsend 72 936 936 false
+if ne r 0
+ret r
+end
+put bstate 0 2
+ret 0
+end
+note Registry bytes are a caller-supplied PACKED_REGISTRY_TABLE in rqpay, omitted when empty.
+fn breg n ulong to long
+if ne get bstate 0 2
+ret -10
+end
+if ne n 0
+if or lt n 8 gt n 65456
+ret -1
+end
+if or ne rqget32 4 0 n eq rqget32 4 4 0
+ret -1
+end
+r = rqsend 73 n n false
+if ne r 0
+ret r
+end
+end
+put bstate 0 3
+ret 0
+end
+fn bstart budget ulong staticsz ulong to long
+if ne get bstate 0 3
+ret -10
+end
+if or eq budget 0 or eq staticsz 0 gt staticsz 65456
+ret -1
+end
+put bbudget 0 budget
+put bstaticn 0 staticsz
+put bstate 0 4
+ret 0
+end
+note rqpay holds exact rpc_set_guest_system_info_v03_00 bytes; no fabricated driver/version strings.
+note WolframLanguageEvaluator {6*4+3*256}->792 bytes; source generated/g_rpc-structures.h:36-47.
+fn bguest to long
+if ne get bstate 0 5
+ret -10
+end
+for i ulong 3
+n = rqget32 4 add 8 mul i 4
+if gt n 256
+ret -1
+end
+end
+r = rqsend 1 792 792 true
+if ne r 0
+ret r
+end
+put bhead 0 rqget32 4 0
+put bhead 1 rqget32 4 4
+put bfunc 0 1
+put bseq 0 ulong get rqsent 0
+put bstate 0 6
+ret 0
+end
+fn bstatic to long
+if ne get bstate 0 7
+ret -10
+end
+n = get bstaticn 0
+rqclear n
+r = rqsend 65 n n true
+if ne r 0
+ret r
+end
+put bfunc 0 65
+put bseq 0 ulong get rqsent 0
+put bstate 0 8
+ret 0
+end
+note Bind completion to exact replay generation and received element sequence. No RPC acknowledgement exists.
+fn bseqdone gen ulong token ulong ok bool to long
+if ne get bstate 0 11
+ret -10
+end
+if ne gen get bgen 0
+ret -10
+end
+if ne token get btoken 0
+ret -10
+end
+if not ok
+ret bfail -12
+end
+put bstate 0 get bprev 0
+ret 0
+end
+fn bcorrel to bool
+ret and eq get rqfun 0 get bfunc 0 eq get rqreply 0 get bseq 0
+end
+fn brmreply to long
+f = get bfunc 0
+n = get rqlen 0
+p = get bplen 0
+if eq f 103
+if or ne n 32 ne rqget32 3 100 p
+ret bfail -13
+end
+if or ne rqget32 3 104 0 ne rqget32 3 108 0
+ret bfail -13
+end
+for i ulong 4
+if ne rqget32 3 add 80 mul i 4 get bhead i
+ret bfail -13
+end
+end
+if gt add 112 p get rqslots 0
+ret bfail -13
+end
+put bresult 0 rqget32 3 96
+if ne get bresult 0 0
+put bstate 0 9
+ret -12
+end
+for i ulong p
+put pareply i get rqout add 112 i
+end
+else
+if eq f 76
+if or ne n add 40 p ne rqget32 3 96 p
+ret bfail -13
+end
+note Flat profile: rmapiRpcFlags and reserved0 must be zero; rmctrl metadata is distinct.
+if or ne rqget32 3 100 0 or ne rqget32 3 112 0 ne rqget32 3 116 0
+ret bfail -13
+end
+for i ulong 3
+if ne rqget32 3 add 80 mul i 4 get bhead i
+ret bfail -13
+end
+end
+put bresult 0 rqget32 3 92
+if ne get bresult 0 0
+put bstate 0 9
+ret -12
+end
+for i ulong p
+put pareply i get rqout add 120 i
+end
+else
+if or ne f 10 ne n 16
+ret bfail -13
+end
+if or ne rqget32 3 80 get bhead 0 ne rqget32 3 88 get bhead 1
+ret bfail -13
+end
+if ne rqget32 3 84 0
+ret bfail -13
+end
+put bresult 0 rqget32 3 92
+end
+end
+put bstate 0 9
+if ne get bresult 0 0
+ret -12
+end
+ret 1
+end
+fn bpoll to long
+s = get bstate 0
+if or eq s 12 ne get rqdead 0 0
+ret -6
+end
+if not or or eq s 4 eq s 6 or eq s 8 eq s 10
+ret -10
+end
+if eq get bbudget 0 0
+ret bfail -11
+end
+put bbudget 0 sub get bbudget 0 1
+r = rqrecv
+if lt r 0
+ret bfail r
+end
+if eq r 0
+ret 0
+end
+if eq get rqfun 0 4098
+n = get rqlen 0
+if lt n 40
+ret bfail -13
+end
+words = rqget32 3 80
+idx = rqget32 3 84
+if or or eq words 0 ge idx words gt words div sub n 40 4
+ret bfail -13
+end
+for i ulong get rqslots 0
+put bsevent i get rqout i
+end
+put bselen 0 get rqslots 0
+put btoken 0 rqget32 3 36
+put bprev 0 s
+put bstate 0 11
+ret 2
+end
+if eq s 4
+if or ne get rqfun 0 4097 ne get rqreply 0 0
+ret bfail -13
+end
+if ne get rqres 0 0
+ret bfail -12
+end
+put bstate 0 5
+ret 1
+end
+if not bcorrel
+ret bfail -13
+end
+if eq get rqres 0 RQU32
+ret bfail -13
+end
+if ne get rqres 0 0
+if eq s 10
+put bresult 0 get rqres 0
+put bstate 0 9
+ret -12
+end
+ret bfail -12
+end
+if eq s 6
+note Private result is an NV_STATUS, zero succeeds. Version renegotiation is refused, not silently retried.
+if ne get rqpriv 0 0
+put bresult 0 get rqpriv 0
+ret bfail -12
+end
+if ne get rqlen 0 792
+ret bfail -13
+end
+if or ne rqget32 3 80 get bhead 0 ne rqget32 3 84 get bhead 1
+ret bfail -13
+end
+put bstate 0 7
+ret 1
+end
+if eq s 8
+if ne get rqlen 0 get bstaticn 0
+ret bfail -13
+end
+put bstate 0 9
+ret 1
+end
+ret brmreply
+end
+fn brmwait f ulong n ulong budget ulong to void
+note Pending sentinel prevents the previous operation's status being exposed as this one's result.
+put bresult 0 RQU32
+put bfunc 0 f
+put bseq 0 ulong get rqsent 0
+put bplen 0 n
+put bbudget 0 budget
+put bstate 0 10
+end
+note pabuf/palen produced by existing allocation/channel codecs, never duplicated.
+fn brmalloc cli ulong parent ulong obj ulong cls ulong budget ulong to long
+if ne get bstate 0 9
+ret -10
+end
+n = get palen 0
+if or not paf4 cli parent obj cls or gt n 3984 eq budget 0
+ret -1
+end
+rqclear add 32 n
+rqput32 4 0 cli
+rqput32 4 4 parent
+rqput32 4 8 obj
+rqput32 4 12 cls
+rqput32 4 20 n
+for i ulong n
+put rqpay add 32 i get pabuf i
+end
+r = rqsend 103 32 add 32 n true
+if ne r 0
+ret r
+end
+put bhead 0 cli
+put bhead 1 parent
+put bhead 2 obj
+put bhead 3 cls
+brmwait 103 n budget
+ret 0
+end
+fn brmctrl cli ulong obj ulong cmd ulong budget ulong to long
+if ne get bstate 0 9
+ret -10
+end
+n = get palen 0
+if or not paf4 cli obj cmd 0 or gt n 4096 eq budget 0
+ret -1
+end
+rqclear add 40 n
+rqput32 4 0 cli
+rqput32 4 4 obj
+rqput32 4 8 cmd
+rqput32 4 16 n
+for i ulong n
+put rqpay add 40 i get pabuf i
+end
+r = rqsend 76 add 40 n add 40 n true
+if ne r 0
+ret r
+end
+put bhead 0 cli
+put bhead 1 obj
+put bhead 2 cmd
+brmwait 76 n budget
+ret 0
+end
+fn brmfree cli ulong obj ulong budget ulong to long
+if ne get bstate 0 9
+ret -10
+end
+if or not paf4 cli obj 0 0 eq budget 0
+ret -1
+end
+rqclear 16
+rqput32 4 0 cli
+rqput32 4 8 obj
+r = rqsend 10 16 16 true
+if ne r 0
+ret r
+end
+put bhead 0 cli
+put bhead 1 obj
+brmwait 10 0 budget
+ret 0
+end

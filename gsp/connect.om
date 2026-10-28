@@ -1,0 +1,17 @@
+note gsp/connect.om: composition seam, not a hardware launcher.
+note Compose rpc/sysinfo/params/boot/arena before this unit. Firmware bytes and IOVAs are caller inputs.
+note arboot constructs the arena and preboot command frames once, leaving rq counters/images attached.
+note Replay queues remain host copies; later receive frames must be caller-supplied. No DMA ownership,
+note queue publication, BAR notification or sequencer execution is inferred from successful encoding.
+fn arboot budget ulong staticsz ulong to long
+r = breset
+if ne r 0
+ret r
+end
+r = arbuild
+if ne r 0
+ret bfail r
+end
+put bstate 0 3
+ret bstart budget staticsz
+end

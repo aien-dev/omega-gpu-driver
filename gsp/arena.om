@@ -1,0 +1,427 @@
+note Host-only physical image composer, never DMA/MMIO. Oracle c5bb3a4b gb10_gsp_boot.c:367-553.
+note Profile 1 means explicit UNVERIFIED GB10B 580.173.02 layout, NOT detected hardware identity.
+note Vendor 20e4e6e kernel_sec2_gb10b.c:507-508: gspFmcSysmemOffset = memdescGetPhysAddr; frtsSysmemSize = pGspImageSize.
+note WolframLanguageEvaluator FromDigits[dc3aae21371a60b3,16] -> 15869187694674993331; FromDigits[1410de7e,16] -> 336649854.
+note Caller supplies arin bytes and arsrc/arslen spans: ELF,RMsignature,bootloader,FMC,hash,key,FMCsignature.
+note No firmware parsing/authentication: signed-byte fixtures test composition only, not signature validity.
+note arcfg: profile,dmaBits,heapPA,heapBytes,gpuInstance,regkeys,BLcode,BLdata,BLmanifest,registryBytes.
+note arbase is caller supplied IOVA. arcap <=16MiB; arused must be zero on entry. Partial output invalid on failure.
+note aroff/arsize: WPR,libos,7 logs,args,shared,radix,BL,signature,FMC,FMCargs,ELFdata.
+note arcmd/arstat are queue byte offsets. arcot[0..arclen) is SEC2 packet; artail is EMEM queue tail.
+note Raw registry must be canonical PACKED_REGISTRY_TABLE: 1..32 entries, exact contiguous name/value order,
+note nonempty terminated names, type1 DWORD length4 or type2/3 nonempty bytes, reserved padding zero.
+note Strings preserve opaque bytes like C oracle; their termination is not reinterpreted. Zero bytes omits RPC73.
+note Refusals: -1 profile/config, -2 source spans, -3 capacity, -4 registry, -5 DMA, -6 queue.
+const ARMAX ulong 16777216
+global arbuf uchar 16777216
+global arin uchar 16777216
+global arreg uchar 65456
+global arsrc ulong 7
+global arslen ulong 7
+global arcfg ulong 10
+global arbase ulong 1
+global arcap ulong 1
+global arused ulong 1
+global aroff ulong 17
+global arsize ulong 17
+global arcmd ulong 1
+global arstat ulong 1
+global arcot uchar 1024
+global arclen ulong 1
+global artail ulong 1
+global arnp ulong 4
+global arlvl ulong 4
+text arnames "LOGINIT|LOGINTR|LOGRM|LOGMNOC|LOGDBG|LOGROOT|LOGKRNL|RMARGS|"
+fn arput o ulong v ulong n ulong to void
+for i ulong n
+put arbuf add o i uchar and shr v mul i 8 255
+end
+end
+fn arcput o ulong v ulong n ulong to void
+for i ulong n
+put arcot add o i uchar and shr v mul i 8 255
+end
+end
+fn arreg32 o ulong to ulong
+v = ulong 0
+for i ulong 4
+v = or v shl ulong get arreg add o i mul i 8
+end
+ret v
+end
+fn arregok to bool
+n = get arcfg 9
+if eq n 0
+ret true
+end
+if or lt n 8 gt n 65456
+ret false
+end
+if ne arreg32 0 n
+ret false
+end
+cnt = arreg32 4
+if or eq cnt 0 gt cnt 32
+ret false
+end
+pos = add 8 mul cnt 16
+if gt pos n
+ret false
+end
+for i ulong cnt
+e = add 8 mul i 16
+if ne arreg32 e pos
+ret false
+end
+if ge pos n
+ret false
+end
+if eq get arreg pos 0
+ret false
+end
+while lt pos n bound 65456
+if eq get arreg pos 0
+break
+end
+pos = add pos 1
+end
+if ge pos n
+ret false
+end
+pos = add pos 1
+for j ulong 3
+if ne get arreg add e add 5 j 0
+ret false
+end
+end
+t = get arreg add e 4
+sz = arreg32 add e 12
+if eq t 1
+if ne sz 4
+ret false
+end
+else
+if or lt t 2 gt t 3
+ret false
+end
+if or eq sz 0 ne arreg32 add e 8 pos
+ret false
+end
+if gt sz sub n pos
+ret false
+end
+pos = add pos sz
+end
+end
+ret eq pos n
+end
+note Dynamic for loops have compiler fuel1000000; page chunks cover the full declared16MiB bound.
+fn arzero o ulong n ulong to void
+for p ulong div n 4096
+for i ulong 4096
+put arbuf add o i 0
+end
+o = add o 4096
+end
+for i ulong rem n 4096
+put arbuf add o i 0
+end
+end
+fn arcspan d ulong s ulong n ulong to void
+for i ulong n
+v = get arin add s i
+put arbuf add d i v
+end
+end
+fn artake k ulong n ulong to bool
+sz = and add n 4095 not ulong 4095
+u = get arused 0
+if or lt sz n gt u get arcap 0
+ret false
+end
+if gt sz sub get arcap 0 u
+ret false
+end
+put aroff k u
+put arsize k n
+put arused 0 add u sz
+arzero u sz
+ret true
+end
+fn arcopy k ulong s ulong to void
+n = get arslen s
+k = get aroff k
+s = get arsrc s
+for p ulong div n 4096
+arcspan k s 4096
+k = add k 4096
+s = add s 4096
+end
+arcspan k s rem n 4096
+end
+fn araddr k ulong to ulong
+ret add get arbase 0 get aroff k
+end
+fn ardma pa ulong n ulong to bool
+b = get arcfg 1
+if gt n sub not ulong 0 pa
+ret false
+end
+if eq b 64
+ret true
+end
+lim = shl ulong 1 b
+if ge pa lim
+ret false
+end
+ret le n sub lim pa
+end
+fn arlogpt k ulong to void
+n = div get arsize k 4096
+a = araddr k
+k = get aroff k
+for j ulong n
+o = add k 8
+o = add o mul j 8
+v = add a mul j 4096
+arput o v 8
+end
+end
+fn arlogs to void
+pos = ulong 0
+for i ulong 8
+id = ulong 0
+while ne get arnames pos 124 bound 8
+id = or shl id 8 ulong get arnames pos
+pos = add pos 1
+end
+pos = add pos 1
+k = add i 2
+if eq i 7
+k = ulong 9
+end
+e = add get aroff 1 mul i 32
+arput e id 8
+arput add e 8 araddr k 8
+arput add e 16 get arsize k 8
+arput add e 24 257 2
+end
+for i ulong 7
+arlogpt add i 2
+end
+end
+fn arfixed to void
+a = get aroff 9
+arput a araddr 10 8
+arput add a 8 129 4
+arput add a 16 4096 8
+arput add a 24 add ulong 4096 262144 8
+arput add a 44 get arcfg 4 4
+arput add a 48 1 1
+arput add a 72 get arcfg 2 8
+arput add a 80 get arcfg 3 8
+f = get aroff 15
+arput f get arcfg 5 4
+arput add f 8 1 4
+arput add f 12 256 4
+arput add f 16 araddr 0 8
+arput add f 36 1 1
+arput add f 40 2 4
+arput add f 48 araddr 1 8
+w = get aroff 0
+arput w 15869187694674993331 8
+arput add w 8 1 8
+arput add w 16 araddr 11 8
+arput add w 24 get arslen 0 8
+arput add w 32 araddr 12 8
+arput add w 40 get arslen 2 8
+arput add w 48 get arcfg 6 8
+arput add w 56 get arcfg 7 8
+arput add w 64 get arcfg 8 8
+arput add w 72 araddr 13 8
+arput add w 80 get arsize 13 8
+arput add w 128 shl ulong 133 20 8
+end
+fn arradix to bool
+put arnp 3 div add get arslen 0 4095 4096
+for j ulong 3
+i = sub 3 j
+put arnp sub i 1 add div sub get arnp i 1 512 1
+end
+if ne get arnp 0 1
+ret false
+end
+put arlvl 0 0
+for i ulong 3
+put arlvl add i 1 add get arlvl i mul get arnp i 4096
+end
+sz = add get arlvl 3 mul get arnp 3 4096
+if not artake 11 sz
+ret false
+end
+for i ulong 3
+for j ulong get arnp add i 1
+o = add get aroff 11 add get arlvl i mul j 8
+v = add araddr 11 add get arlvl add i 1 mul j 4096
+arput o v 8
+end
+end
+put aroff 16 add get aroff 11 get arlvl 3
+put arsize 16 get arslen 0
+arcopy 16 0
+ret true
+end
+fn arcotmk to void
+for i ulong 1024
+put arcot i 0
+end
+arcput 0 shl ulong 3 30 4
+arcput 4 336649854 4
+arcput 8 1 2
+arcput 10 860 2
+arcput 12 araddr 14 8
+arcput 28 get arslen 3 4
+for i ulong 48
+put arcot add 44 i get arin add get arsrc 4 i
+end
+for i ulong 384
+put arcot add 92 i get arin add get arsrc 5 i
+put arcot add 476 i get arin add get arsrc 6 i
+end
+arcput 860 araddr 15 8
+put arclen 0 868
+put artail 0 864
+end
+fn arpre to bool
+rqinit
+for i ulong 936
+put rqpay i get siout i
+end
+if ne rqsend 72 936 936 false 0
+ret false
+end
+n = get arcfg 9
+if ne n 0
+for i ulong n
+put rqpay i get arreg i
+end
+if ne rqsend 73 n n false 0
+ret false
+end
+end
+for i ulong 262144
+put arbuf add get arcmd 0 i get rqcmd i
+end
+ret true
+end
+fn arbuild to long
+put arclen 0 0
+put artail 0 0
+if or ne get arcfg 0 1 or eq get arcfg 1 0 gt get arcfg 1 64
+ret -1
+end
+if or ne get arused 0 0 gt get arcap 0 ARMAX
+ret -1
+end
+if ne and get arbase 0 4095 0
+ret -1
+end
+if gt get arcap 0 sub not ulong 0 get arbase 0
+ret -1
+end
+if or eq get arcfg 2 0 eq get arcfg 3 0
+ret -1
+end
+if ne and get arcfg 2 4095 0
+ret -1
+end
+if ne and get arcfg 3 4095 0
+ret -1
+end
+if or gt get arcfg 4 4294967295 gt get arcfg 5 4294967295
+ret -1
+end
+if or ne get arcfg 6 45056 or ne get arcfg 7 2560 ne get arcfg 8 0
+ret -1
+end
+for i ulong 7
+if or eq get arslen i 0 gt get arsrc i ARMAX
+ret -2
+end
+if gt get arslen i sub ARMAX get arsrc i
+ret -2
+end
+end
+if or ne get arslen 2 196608 ne get arslen 4 48
+ret -2
+end
+if or ne get arslen 5 384 ne get arslen 6 384
+ret -2
+end
+if not arregok
+ret -4
+end
+if not ardma get arcfg 2 get arcfg 3
+ret -5
+end
+for i ulong 17
+put aroff i 0
+put arsize i 0
+end
+if not artake 0 4096
+ret -3
+end
+put arsize 0 256
+if not artake 1 4096
+ret -3
+end
+for i ulong 7
+sz = ulong 65536
+if eq i 5
+sz = ulong 4096
+end
+if not artake add i 2 sz
+ret -3
+end
+end
+if not artake 9 4096
+ret -3
+end
+if not artake 10 mul ulong 129 4096
+ret -3
+end
+put arcmd 0 add get aroff 10 4096
+put arstat 0 add get arcmd 0 262144
+for i ulong 129
+arput add get aroff 10 mul i 8 add araddr 10 mul i 4096 8
+end
+if not arradix
+ret -3
+end
+if not artake 12 get arslen 2
+ret -3
+end
+arcopy 12 2
+if not artake 13 and add get arslen 1 255 not ulong 255
+ret -3
+end
+arcopy 13 1
+if not artake 14 get arslen 3
+ret -3
+end
+arcopy 14 3
+if not artake 15 4096
+ret -3
+end
+put arsize 15 88
+if not ardma get arbase 0 get arused 0
+ret -5
+end
+arlogs
+arfixed
+if not arpre
+ret -6
+end
+arcotmk
+ret 0
+end

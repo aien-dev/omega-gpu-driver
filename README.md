@@ -1,8 +1,9 @@
 # omega-gpu-driver
 
-The GB10 GPU driver written in seeded Omega. Status: **W0 IMPLEMENTED and EXERCISED in QEMU. The driver
-units below are IMPLEMENTED and EXERCISED on the host against C referees and simulators only. Nothing has
-run on GB10 hardware; nothing here is QUALIFIED. GSP boot (`gb10_gsp_boot.c`) is not ported.**
+The GB10 GPU driver written in seeded Omega. Status: **W0 IMPLEMENTED and EXERCISED in QEMU. Existing
+driver units are host-exercised against C referees and simulators. The new bounded boot image and RPC
+replay units below are IMPLEMENTED and HOST_EXERCISED with exact binary parity and behavior mutants.
+Nothing has run on GB10 hardware; nothing here is QUALIFIED. No NVIDIA kernel driver replacement is deployed.**
 
 Parent: [aien-dev/omega-mv](https://github.com/aien-dev/omega-mv), the seeded Omega compiler. This repo
 pins one omega-mv commit and the sha256 of the `omc` it births (`tools/omc.pin`). The pin is currently
@@ -81,6 +82,8 @@ reference byte for byte, and each mutant script changes one line at a time and r
 | `gsp/sha2.om`, `gsp/inflate.om`, `gsp/fw.om`, `gsp/bindata.om`, `fwprep.om` (firmware inputs) | `ck_gsp_fw_inspect.c`, `ck_gsp_bindata_extract.c`, `argus/sha256.c` | `tests/fw_diff.sh` | `tests/mutants-fw.sh` |
 | `chan/gmmu.om`, `chan/mem.om`, `chan/chan.om`, `chan/sim.om` (page tables, buffers, channels; simulator mode only) | `gpu/gmmu.c`, `gpu_mem.c`, `gpu_chan.c`, `gpu_sim.c` | `tests/chan_diff.sh` | `tests/mutants-chan.sh` |
 | `chan/params.om` (RM alloc/control records for GSP-RM, NVIDIA 580.173.02 layouts) | NVIDIA headers | `tests/params_diff.sh` | `tests/mutants-chan.sh` |
+| `gsp/rpc.om`, `gsp/boot.om` (SWAP_RX transport frames, boot handshake, correlated RM transactions and quarantine; replay only) | `dev/gb10_gsp_boot.c` and pinned vendor protocol | `tests/rpc_diff.sh` | `tests/mutants-rpc.sh` |
+| `gsp/arena.om`, `gsp/connect.om` (bounded WPR/libos/log/radix/FMC/COT composition and preboot queue attachment) | `dev/gb10_gsp_boot.c` | `tests/arena_diff.sh` | `tests/mutants-arena.sh` |
 
 `fwprep FWFILE OGKMSRC OUTDIR` reads the signed `gsp_ga10x.bin` (unchanged) and the NVIDIA open-source
 bindata tables, and writes `fmc.img`, `fmc.hash`, `fmc.pubkey`, `fmc.sig`, `bl.img` and, last,
@@ -90,6 +93,88 @@ Test-only referees and harnesses (disclosed; never linked into the driver): `tes
 `tests/params_ref.c` (C), the aienux C tools built fresh by the diff scripts, and the shell scripts in
 `tests/`. Host tools in the build and test path: `sh`, `git`, `sha256sum`, `cc`, QEMU 8.2.2, busybox,
 zstd, cpio, gzip.
+
+## Boot image and RPC replay boundary
+
+The new implementation is seeded `.om`, not a C driver hidden behind a wrapper. It reuses the existing
+`siout` system-info encoder and `pabuf`/`palen` allocation/channel codecs. `brmalloc`, `brmctrl` and
+`brmfree` freeze one pending request and feed those bytes into the queue codec; accepted successful
+replies populate `pareply`. Header success and the RM body status are separate checks. Failed replies
+leave the consumer reply buffer unchanged. Hardware `chan/chan.om` bind/disable/idle still trap.
+
+`arbuild` composes the full WPR/libos/log page tables/cached args/shared queue/radix3/bootloader/
+signature/FMC/FMC-args/COT image into `arbuf`, bounded by `arcap <= 16777216`; input staging `arin`
+has the same fixed bound. `arsrc/arslen[0..7)` select ELF, RM signature, bootloader, FMC, FMC hash,
+FMC key and FMC signature. `arcfg[0..10)` carries explicit profile, DMA width, heap IOVA/size, GPU
+instance, regkeys, bootloader code/data/manifest offsets and serialized registry length. `aroff/arsize`
+describe all regions; `arcmd/arstat` are queue offsets, `araddr 15` the FMC-args IOVA, `arcot/arclen`
+the COT packet and `artail` its EMEM tail. Outputs are invalid after any nonzero status. The registry
+input is canonical bounded PACKED_REGISTRY_TABLE bytes, not a foreign runtime. `arboot` connects this
+image's preboot queue counters directly to the boot handshake without reconstructing the queue.
+
+The host receipt is `tests/gsp-host-receipt.txt`: exact sender frames and boot state/refusal controls;
+five complete arena fixtures (including multi-level radix and DWORD/binary/string registry); 31
+invalid arena fixtures; 19 RPC and 12 arena mutants. Build/setup failures and unexpected runtime
+traps do not count as detected mutants. These tests use synthetic signed-byte inputs, not valid
+firmware authentication or firmware execution.
+
+The queue layout is the non-confidential-computing NVIDIA 580.173.02 protocol: SWAP_RX, separate element
+and RPC sequences, actual aligned-padding checksum validation, bounded wrapped slots, and full-slot
+capture. RM_ALLOC deliberately excludes appended params from its logical length and checksum, as
+`rpc.c:11194-11228` does. Those tail bytes are not authenticated or checksummed. The supported alloc
+params bound is 3984 bytes; oversized/continuation requests refuse, not truncate. This is not a
+cryptographic trust boundary.
+
+Boot replay requires preboot system info and optional nonempty registry, explicit peer queue creation,
+INIT_DONE, SET_GUEST_SYSTEM_INFO version handshake, then STATIC_INFO of the supplied expected size.
+Private handshake result is an NV_STATUS: zero succeeds (`rpc.c:8764`); it is not a version value.
+Version renegotiation refuses instead of guessing. CPU_SEQUENCER suspends the exact received event
+until an explicit matching replay-generation/event token completes it. This does not call the existing
+MMIO-capable sequencer and does not claim that commands executed. No invented acknowledgement is sent.
+
+`REPLAY_READY` is host state only, never a production resolver capability. Wait budgets count caller
+polls, not elapsed time; unrelated events do not replenish them. Publication timeout or corrupt/
+uncorrelated replies quarantine the replay with pending identity retained. Late replies cannot turn
+that into success. `breset` only disposes replay images; it cannot reset hardware, prove idle, unmap
+DMA, or authorize reclaim. Unpublished queue-full refusal does not consume a sequence number.
+
+The arena's GB10B/SEC2 profile is explicit caller input and remains unverified for the Spark target.
+It does not establish chip identity or select FSP versus SEC2: NVIDIA `kernel_gsp_gh100.c:833-890`
+branches conditionally. No device is opened to determine this here.
+
+Run the host-only commands with the exact C reference checkout and pinned compiler:
+
+```sh
+AIENUX=<aienux-c5bb3a4b> OMC=<compiler-397e6704>/seed/out/omc sh tests/rpc_diff.sh
+AIENUX=<aienux-c5bb3a4b> OMC=<compiler-397e6704>/seed/out/omc sh tests/mutants-rpc.sh
+AIENUX=<aienux-c5bb3a4b> OMC=<compiler-397e6704>/seed/out/omc sh tests/arena_diff.sh
+AIENUX=<aienux-c5bb3a4b> OMC=<compiler-397e6704>/seed/out/omc sh tests/mutants-arena.sh
+```
+
+Reference pins: aienux `c5bb3a4b9898257658aba0b7178a3c73a0371c27`; NVIDIA
+`20e4e6e19cc26ba47b5cbe23130a396be100c427` (tag `580.173.02`); compiler
+`397e67040fb74853c6814097fe02ae4e1ebd6f66`, sha256 in `tools/omc.pin`. Compiler PRs #878 and #890
+are pending dependencies, not merged compiler capabilities. The new independent C referee is
+test-only, compiled with Ubuntu GCC `13.3.0-6ubuntu2~24.04.1`; it is never linked into `.om` artifacts.
+Python `3.12.3` coordinates only exact oracle comparisons and temporary mutation copies. It generates
+no production bytes and has no driver runtime role; seeded `.om` already performs the encoding.
+Existing shell, coreutils, git and cc remain disclosed verification tooling, not driver runtime dependencies.
+
+### Still required for independent execution
+
+Hardware is **NOT_RUN**. Actual device identity/profile selection, ownership-safe DMA queue spans,
+release/acquire publication and coherency, queue notification, real sequencer execution, channel
+binding/scheduling, completion-semaphore progress, fault handling and documented drain/recovery remain
+necessary before hardware use. Encoding a physical address does not create a mapping or prove that
+firmware read it. The separate DMA lifecycle backend must be connected through owned handles, never
+by treating these replay globals as mapped buffers.
+
+The current compiler profile is a Linux-process ELF/VFIO profile, not Linux kernel code. A future
+Linux-hosted `.om` user-space driver could replace NVIDIA modules while retaining Linux VFIO/IOMMU
+services; that is not an Omega kernel module or a replacement for the Linux kernel. Actual `.om`
+kernel execution additionally requires a checked kernel calling/trap ABI, relocation/link profile,
+kernel-owned allocation/resource spans, ordered DMA/MMIO, IRQ/workqueue lifecycle and teardown/drain
+primitives. No C/Rust runtime substitute or new trust path is adopted by this replay.
 
 ## On the GB10 (authorized exclusive window only)
 

@@ -1,0 +1,316 @@
+note Host replay ONLY: never opens files/devices or sets hardware mode. Binary stdout is compared to C oracle.
+fn ck yes bool to void
+if not yes
+trap 1
+end
+end
+fn emit to void
+r = write 1 rqcmd 0 RQQSZ
+ck eq r long RQQSZ
+end
+note Build peer frames independently from queue sender; malformed cases mutate these bytes.
+fn tfzero n ulong to void
+for i ulong mul div add n 4175 4096 4096
+put rqtmp i 0
+end
+end
+fn tfdata n ulong to void
+for i ulong n
+put rqtmp add 80 i get rqpay i
+end
+rqput32 2 32 rqsum 2 mul div add n 87 8 8
+end
+fn tfpub n ulong to void
+wr = rqget32 1 16
+e = div add n 4175 4096
+for i ulong mul e 4096
+o = rem add wr div i 4096 63
+o = add 4096 mul o 4096
+o = add o rem i 4096
+put rqstat o get rqtmp i
+end
+rqput32 1 16 rem add wr e 63
+end
+fn tf f ulong n ulong seq ulong result ulong priv ulong to void
+tfzero n
+rqput32 2 36 ulong get rqrx 0
+rqput32 2 40 div add n 4175 4096
+rqput32 2 48 RQVER
+rqput32 2 52 RQSIG
+rqput32 2 56 add 32 n
+rqput32 2 60 f
+rqput32 2 64 result
+rqput32 2 68 priv
+rqput32 2 72 seq
+tfdata n
+tfpub n
+end
+fn begin to void
+ck eq breset 0
+ck eq bsys 0
+ck eq breg 0 0
+ck eq bstart 40 128 0
+note Poll before peer initialization consumes only the bounded wait budget, not readiness.
+ck not rqshape 1
+ck eq bpoll 0
+ck eq get bstate 0 4
+rqpeer
+rqclear 0
+tf 4097 0 0 0 0
+ck eq bpoll 1
+ck eq get bstate 0 5
+rqclear 792
+rqput32 4 0 1
+rqput32 4 4 2
+ck eq bguest 0
+tf 1 792 get bseq 0 0 0
+ck eq bpoll 1
+ck eq get bstate 0 7
+ck eq bstatic 0
+rqclear 128
+tf 65 128 get bseq 0 0 0
+ck eq bpoll 1
+ck eq get bstate 0 9
+end
+fn ackalloc to void
+rqclear add 32 get bplen 0
+for i ulong 4
+rqput32 4 mul i 4 get bhead i
+end
+rqput32 4 20 get bplen 0
+tf 103 32 get bseq 0 0 0
+note Alloc tail is physically transferred but outside logical checksum, as vendor580 does.
+o = add 4096 mul rem add rqget32 1 16 62 63 4096
+for i ulong get bplen 0
+put rqstat add add o 112 i uchar rem add i 17 256
+end
+end
+fn main to int
+rqinit
+rqpeer
+for i ulong 8192
+put rqpay i uchar rem i 256
+end
+ck eq rqsend 72 17 17 false 0
+emit
+ck eq rqsend 76 8192 8192 true 0
+emit
+rqput32 0 16 62
+rqput32 1 32 10
+ck eq rqsend 76 4020 4020 true 0
+emit
+put bstate 0 9
+ck eq paroot 7 42 120
+ck eq brmalloc 7 0 7 0 20 0
+emit
+note Full ring must consult SWAP_RX peer pointer and preserve sequence/write pointer/payload.
+rqinit
+rqput32 0 16 62
+rqput32 0 32 10
+ck eq rqsend 72 0 0 true -2
+ck eq rqget32 0 16 62
+ck eq get rqseq 0 uint 0
+ck eq get rqtx 0 uint 0
+note Oversize length, tail beyond coverage, invalid pointers and queue flags.
+ck eq rqsend 103 32 4017 true -1
+ck eq rqsend 76 RQU32 RQU32 true -1
+rqput32 0 16 63
+ck eq rqsend 72 0 0 true -1
+rqput32 0 16 0
+rqput32 0 20 0
+ck eq rqsend 72 0 0 true -1
+note Boot cannot skip systeminfo/registry/init/handshake/static exchange.
+ck eq breset 0
+ck eq bstart 5 128 -10
+ck eq brmalloc 1 2 3 4 1 -10
+begin
+note Existing channel-control codec supplies params unchanged, response status independently checked.
+ck eq paroot 7 42 120
+ck eq brmalloc 7 0 7 0 4 0
+ackalloc
+ck eq bpoll 1
+ck eq get bstate 0 9
+ck eq get pareply 0 17
+ck eq get pareply 119 136
+ck eq pasubdev 3 4
+ck eq brmctrl 7 8 PACMGRI 4 0
+rqclear 44
+rqput32 4 0 7
+rqput32 4 4 8
+rqput32 4 8 PACMGRI
+rqput32 4 12 9
+rqput32 4 16 4
+put pareply 0 77
+tf 76 44 get bseq 0 0 0
+ck eq bpoll -12
+ck eq get pareply 0 77
+ck eq get bstate 0 9
+ck eq brmctrl 7 8 PACMGRI 4 0
+rqput32 4 12 0
+rqput32 4 40 21
+tf 76 44 get bseq 0 0 0
+ck eq bpoll 1
+ck eq get pareply 0 21
+note One in flight only; timeout latches, late replies cannot recover, output stays untouched.
+ck eq brmfree 7 7 1 0
+ck eq brmfree 7 7 1 -10
+ck eq bpoll 0
+ck eq bpoll -11
+rqclear 16
+tf 10 16 get bseq 0 0 0
+ck eq bpoll -6
+ck eq get bstate 0 12
+begin
+note Wrong function/sequence, matching remote error, invalid frame quarantine.
+ck eq brmfree 7 7 4 0
+rqclear 16
+rqput32 4 0 7
+rqput32 4 8 7
+tf 10 16 add get bseq 0 1 0 0
+ck eq bpoll -13
+begin
+ck eq brmfree 7 7 4 0
+rqclear 16
+tf 10 16 get bseq 0 5 0
+ck eq bpoll -12
+ck eq get bresult 0 5
+ck eq get bstate 0 9
+note Sequencer event is suspended work with generation-bound explicit completion, no execution claim.
+ck eq brmfree 7 7 4 0
+rqclear 44
+rqput32 4 0 1
+rqput32 4 4 0
+tf 4098 44 0 0 0
+ck eq bpoll 2
+ck eq get bstate 0 11
+ck eq bpoll -10
+ck eq bseqdone add get bgen 0 1 get btoken 0 true -10
+ck eq bseqdone get bgen 0 add get btoken 0 1 true -10
+ck eq bseqdone get bgen 0 get btoken 0 true 0
+ck eq bseqdone get bgen 0 get btoken 0 true -10
+ck eq get bbudget 0 3
+rqclear 16
+rqput32 4 0 7
+rqput32 4 8 7
+tf 10 16 get bseq 0 0 0
+ck eq bpoll 1
+note Corrupt checksum and actual padding do not advance RX cursor/counter.
+rqinit
+rqpeer
+rqclear 1
+put rqpay 0 9
+tf 72 1 0 0 0
+put rqstat add ulong 4096 81 1
+ck eq rqrecv -3
+ck eq rqget32 0 32 0
+ck eq get rqrx 0 uint 0
+note Excess elements, wrong version with valid checksum, SWAP_RX flags and huge length.
+rqinit
+rqpeer
+rqclear 0
+tf 72 0 0 0 0
+rqput32 1 add ulong 4096 40 2
+rqput32 1 16 2
+ck eq rqrecv -1
+rqput32 1 add ulong 4096 40 1
+rqput32 1 16 1
+rqput32 1 add ulong 4096 56 RQU32
+ck eq rqrecv -1
+rqput32 1 20 0
+ck eq rqrecv -1
+rqinit
+rqpeer
+tf 72 0 0 0 0
+rqput32 1 add ulong 4096 48 0
+note Repair checksum independently in the replay queue image.
+rqput32 1 add ulong 4096 32 xor rqget32 1 add ulong 4096 32 RQVER
+ck eq rqrecv -5
+note Wrapped multi-slot receive captures trailing slot bytes without treating all tail bytes as checksum data.
+rqinit
+rqpeer
+rqput32 0 32 62
+rqput32 1 16 62
+rqclear 4020
+put rqpay 4019 91
+tf 76 4020 0 0 0
+ck eq rqrecv 1
+ck eq get rqout 4099 91
+ck eq rqget32 0 32 1
+note Wrong transport element sequence must fail even when its checksum is valid.
+rqinit
+rqpeer
+tf 72 0 0 0 0
+rqput32 1 add ulong 4096 36 1
+rqput32 1 add ulong 4096 32 xor rqget32 1 add ulong 4096 32 1
+ck eq rqrecv -4
+note Guest private NV_STATUS failure cannot promote boot to replay ready.
+ck eq breset 0
+ck eq bsys 0
+ck eq breg 0 0
+ck eq bstart 10 128 0
+rqpeer
+tf 4097 0 0 0 0
+ck eq bpoll 1
+rqclear 792
+ck eq bguest 0
+tf 1 792 get bseq 0 0 5
+ck eq bpoll -12
+ck eq get bresult 0 5
+note A pending sentinel cannot complete a published request or admit the next one.
+begin
+ck eq brmfree 7 7 4 0
+rqclear 16
+tf 10 16 get bseq 0 RQU32 0
+ck eq bpoll -13
+ck eq brmfree 7 7 4 -10
+note Unsupported flat encoding flags refuse before reply publication.
+begin
+ck eq paroot 7 42 120
+ck eq brmalloc 7 0 7 0 4 0
+rqclear 32
+for i ulong 4
+rqput32 4 mul i 4 get bhead i
+end
+rqput32 4 20 120
+rqput32 4 24 2
+put pareply 0 77
+tf 103 32 get bseq 0 0 0
+ck eq bpoll -13
+ck eq get pareply 0 77
+begin
+ck eq pasubdev 3 4
+ck eq brmctrl 7 8 PACMGRI 4 0
+rqclear 44
+rqput32 4 0 7
+rqput32 4 4 8
+rqput32 4 8 PACMGRI
+rqput32 4 16 4
+rqput32 4 20 2
+put pareply 0 77
+tf 76 44 get bseq 0 0 0
+ck eq bpoll -13
+ck eq get pareply 0 77
+note FREE parent is part of the frozen strict request shape.
+begin
+ck eq brmfree 7 7 4 0
+rqclear 16
+rqput32 4 0 7
+rqput32 4 4 9
+rqput32 4 8 7
+tf 10 16 get bseq 0 0 0
+ck eq bpoll -13
+note Unsupported routing and non-CC metadata fail even with a valid checksum.
+rqinit
+rqpeer
+tf 72 0 0 0 0
+rqput32 1 add ulong 4096 76 2
+rqput32 1 add ulong 4096 32 xor rqget32 1 add ulong 4096 32 2
+ck eq rqrecv -5
+rqinit
+rqpeer
+tf 72 0 0 0 0
+put rqstat 4096 1
+rqput32 1 add ulong 4096 32 xor rqget32 1 add ulong 4096 32 1
+ck eq rqrecv -5
+ret 0
+end

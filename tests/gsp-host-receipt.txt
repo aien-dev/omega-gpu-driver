@@ -1,0 +1,46 @@
+GSP boot/RPC host receipt. HOST_EXERCISED only. Hardware/kernel execution NOT_RUN.
+Platform: Linux 7.0.0-1019-nvidia aarch64 GNU/Linux.
+Compiler: omega-mv397e67040fb74853c6814097fe02ae4e1ebd6f66 (pending #890 atop #878).
+omc SHA256 bcfa582892afca8f65e551fe56867d918d86e84540c7381be8fa9ef18d0cf0f6.
+Reference: aienuxc5bb3a4b9898257658aba0b7178a3c73a0371c27 native/kernel/dev/gb10_gsp_boot.{c,h}.
+Vendor: open-gpu-kernel-modules20e4e6e19cc26ba47b5cbe23130a396be100c427, tag580.173.02.
+Oracle compiler: cc Ubuntu13.3.0-6ubuntu2~24.04.1. Comparison/mutant coordinator Python3.12.3.
+
+Commands (OMC is the exact pinned binary; AIENUX the clean exact reference checkout):
+OMC=$OMC AIENUX=$AIENUX sh tests/mutants-rpc.sh
+OMC=$OMC AIENUX=$AIENUX sh tests/mutants-arena.sh
+Both run their baseline exact parity gate before their mutants. Both exited0.
+
+Observed RPC baseline:
+rpc_diff: PASS exact command frames and boot/RPC transition controls; hardware NOT_RUN
+Composed source SHA256 aa763b15e332594f599ad8bb3fb215d8bff2666d459fe2c36970971d0dc4ad91
+Omega binary SHA256 e792fb1deb9cec201db10cd4c1cf88ad8dfed87ee94af0b9291908c0b14c20d4
+C referee binary SHA256 412d98e3b9119969783cc2b508ca1f01b4fed4da4a171739b0bedc9cc8f2ef8b
+Exact command frame stream SHA256 d0cd7fc50db7dba9aa0e6eecaa40460fe464a9f115da0c49cffc4a42dc66f607
+All19 mutants DETECTED: swaprx checksum rxseq padding version timeout correlation guest seqtoken seqgen handlerstatus pending allocflags ctrlflags freeparent linkwait headerstatus routing noncc.
+mutants-rpc: PASS all behavior controls detected; hardware NOT_RUN
+
+Observed arena baseline:
+arena_diff: PASS exact arena bytes, plan, COT, preboot attach/INIT_DONE seam and negative refusals; hardware NOT_RUN
+Composed source SHA256 a4946df17176c8eb18f957b83d7bc14f388700caa8c0e48c58fe6c529e001ec8
+Omega binary SHA256 1e3ccef091e2f92edee85b9a886c557114c14b6b8a44d8a0b85bf63169a257d5
+C referee binary SHA256 6918316ef89b74caa34a47e50b1759a2d249e6f78198aeb5a0f4d467ba1f2371
+Five exact full-image cases (0..4);31 refusal cases (10..40), C and Omega return3 with empty output.
+All12 mutants DETECTED: radix logpte sharedpte wprheap signature cotfmc cotargs preboot profile registry dma heapdma.
+mutants-arena: PASS behavior-only controls; hardware NOT_RUN
+Compiler/setup errors and unexpected traps were INVALID, never counted as detected mutants.
+
+Review decisions exercised:
+Read-only protocol review required actual alignment padding checks and whole-slot capture. Those checks now have independent mutants. Review also identified pending-sentinel completion, flat encoding flags, FREE parent, prelink polling and stale header-error status; each now has a behavior control/mutant.
+Correction: an early review suggestion interpreted rpc_result_private as version metadata. Exact vendor rpc.c:8764 instead enters the failure branch for nonzero NV_STATUS; implementation requires zero and rejects renegotiation. No version/status claim is inferred from that review.
+Read-only compiler review: 'Flatten expressions by reassigning one temporary'; retained small whole-loop helpers, not a helper call per byte. Dynamic for-loop fuel is1000000 at this pin; large arena zero/copy and synthetic input loops are page-chunked, not silently truncated to evade the radix case.
+
+Protocol authority read before driver changes:
+message_queue_cpu.c:565-576: 'a store fence is needed here', portAtomicMemoryFenceStore before msgqTxSubmitBuffers.
+message_queue_cpu.c:347-369 waits for peer msgqInit before linking the status queue.
+g_rpc-structures.h:1491-1518 specifies alloc/control flags and reserved fields; rpc.c:11194-11228 excludes RM_ALLOC tail params from the logical checksum length.
+No publication/acquire hardware transport or barrier is implemented by these host arrays. No device/VFIO open, MMIO, DMA submission, firmware execution, module unload/load, service, gate or trust change occurred.
+
+Arithmetic authority:
+WolframLanguageEvaluator: {FromDigits["43505256",16],FromDigits["03000000",16],65536-48-32,65536-48,4096-80-32,6*4+3*256} -> {1129337430,50331648,65456,65488,3984,792}.
+Additional arena constants are quoted with their Wolfram queries beside the constants in gsp/arena.om.
