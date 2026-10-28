@@ -110,6 +110,12 @@ for op in 5 6 7 8; do
     *) echo "dispatch_diff: FAIL core${op}-noperm refusal: $noperm"; fail=1 ;;
   esac
 done
+# 5. Non-sim mode: allpermissions+sqcore cannot activate core in non-sim mode (refuses before effect)
+core_nonsim=$(grep '^== core-nonsim ' "$t/o.cases")
+case "$core_nonsim" in
+  *"rc=-7"*"state=12"*"dead=1"*"core=0"*"nlog=0"*) ;;
+  *) echo "dispatch_diff: FAIL core-nonsim side-effect control: $core_nonsim"; fail=1 ;;
+esac
 
 if [ "$fail" -eq 0 ]; then
   echo "dispatch_diff: PASS exact trace parity, full prevalidation with zero side effects, and strict quarantine controls; hardware NOT_RUN"

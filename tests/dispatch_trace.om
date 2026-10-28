@@ -28,6 +28,7 @@ global zqgenoff ulong 1
 global zqtokoff ulong 1
 global zqistat ulong 1
 global zqtrunc ulong 1
+global zqmode ulong 1
 global zqnw ulong 1
 global zqci ulong 1
 fn sqcorefn op ulong to long
@@ -185,7 +186,7 @@ end
 put scfg 0 busy
 siminit
 put spm 0 0
-put gspmode 0 0
+put gspmode 0 get zqmode 0
 for j ulong SQSAVE
 put sqsave j 0
 end
@@ -310,6 +311,7 @@ put zqgenoff 0 zqnum
 put zqtokoff 0 zqnum
 put zqistat 0 zqnum
 put zqtrunc 0 zqnum
+put zqmode 0 zqnum
 put zqnw 0 zqnum
 put zqci 0 zqnum
 m = zqnum

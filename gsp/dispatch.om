@@ -47,14 +47,21 @@ end
 end
 fn dspunpk nw ulong to void
 for i ulong nw
-put sqbuf i dspu32 add 120 mul i 4
+put sqbuf i uint dspu32 add 120 mul i 4
 end
 end
+note Host model flags (dspperm/sqcore) authorize host simulation only.
+note Hardware core operations require engine-specific typed capabilities (linux-kunit/1);
+note typed hardware core binding is unavailable, and host model flags are never a capability.
+note Any non-simulator mode (gspmode != 0) unconditionally refuses core operations.
 fn dspcperm op ulong to bool
+if ne get gspmode 0 0
+ret false
+end
 if eq get sqcore 0 0
 ret false
 end
-if or lt op SQCRST gt op SQCRSM
+if or lt op SQCRST gt op SQCRES
 ret false
 end
 shf = sub op SQCRST
@@ -78,7 +85,7 @@ ret SQEBUD
 end
 i = ulong 0
 while lt i ci bound 999999
-op = get sqbuf i
+op = sqw i
 i = add i 1
 n = sqpay op
 if eq n M32
@@ -88,12 +95,12 @@ if gt add i n ci
 ret SQEOVR
 end
 if eq op SQSTO
-k = get sqbuf add i 1
+k = sqw add i 1
 if ge k SQSAVE
 ret SQESAVE
 end
 end
-if and ge op SQCRST le op SQCRSM
+if and ge op SQCRST le op SQCRES
 shf = sub op SQCRST
 bit = shl ulong 1 shf
 put dspops 0 or get dspops 0 bit

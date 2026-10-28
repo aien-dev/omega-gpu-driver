@@ -3,7 +3,7 @@
  * Runs reference prevalidation and gsp_seq_run against gsp_sim for every case in tests/dispatch_cases.txt.
  * Opcodes and payload sizes from rmgspseq.h and kernel_gsp.c:5297-5432.
  * Input format (decimal):
- * name busy budget core corefail perms gen_off tok_off bstate pkt_trunc nwords end m w0 .. w(m-1)
+ * name busy budget core corefail perms gen_off tok_off bstate pkt_trunc mode nwords end m w0 .. w(m-1)
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -88,7 +88,7 @@ static int map_why_to_code(const char *why)
     return -1;
 }
 
-static int prevalidate(const uint32_t *buf, uint32_t nw, uint32_t end, uint32_t perms, int has_core, uint32_t bud)
+static int prevalidate(const uint32_t *buf, uint32_t nw, uint32_t end, uint32_t perms, int has_core, uint32_t bud, uint32_t mode)
 {
     if (nw == 0) return -1;
     if (end >= nw) return -2;
@@ -105,7 +105,10 @@ static int prevalidate(const uint32_t *buf, uint32_t nw, uint32_t end, uint32_t 
         }
         if (op >= GSP_SEQ_CORE_RESET && op <= GSP_SEQ_CORE_RESUME) {
             uint32_t bit = 1u << (op - GSP_SEQ_CORE_RESET);
-            if (!has_core || !(perms & bit)) return -7;
+            /* Host model flags (perms/has_core) authorize host simulation only (mode == 0).
+             * Hardware core operations require typed engine capabilities; non-sim mode (mode != 0)
+             * unconditionally refuses core operations. */
+            if (mode != 0 || !has_core || !(perms & bit)) return -7;
         }
         i += n;
     }
@@ -120,10 +123,10 @@ int main(void)
         while (*p == ' ' || *p == '\t') p++;
         if (*p == '#' || *p == '\n' || *p == '\0') continue;
         char name[64];
-        long long busy, bud, core, fail, perms, gen_off, tok_off, bstate, pkt_trunc, nw, end, m;
+        long long busy, bud, core, fail, perms, gen_off, tok_off, bstate, pkt_trunc, mode, nw, end, m;
         int off = 0;
-        if (sscanf(p, "%63s %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld%n",
-                   name, &busy, &bud, &core, &fail, &perms, &gen_off, &tok_off, &bstate, &pkt_trunc, &nw, &end, &m, &off) != 13) {
+        if (sscanf(p, "%63s %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld %lld%n",
+                   name, &busy, &bud, &core, &fail, &perms, &gen_off, &tok_off, &bstate, &pkt_trunc, &mode, &nw, &end, &m, &off) != 14) {
             fprintf(stderr, "dispatch_ref: malformed line: %s\n", line);
             return 2;
         }
@@ -170,7 +173,7 @@ int main(void)
         } else if ((uint32_t)end >= (uint32_t)nw) {
             dead = 1; state = 12; rc = -2;
         } else {
-            int pr = prevalidate(buf, (uint32_t)nw, (uint32_t)end, (uint32_t)perms, (int)core, (uint32_t)bud);
+            int pr = prevalidate(buf, (uint32_t)nw, (uint32_t)end, (uint32_t)perms, (int)core, (uint32_t)bud, (uint32_t)mode);
             if (pr != 0) {
                 dead = 1; state = 12; rc = pr;
             } else {
