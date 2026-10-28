@@ -10,11 +10,11 @@ note     src/nvidia/generated/g_rpc-structures.h:1535-1544 (rpc_run_cpu_sequence
 note Reference:
 note   omega-driver-reference native/kernel/gpu/gsp_seq.{h,c}
 note Contracts:
-note   - Entire sequence is prevalidated (dspprev) before any MMIO/sleep/core effect.
-note   - If any opcode is invalid, overruns buffer, accesses invalid save index, or requires
-note     an unauthorized/unavailable core effect, dispatch refuses before any effect is executed.
-note   - Hardware core operations require engine-specific typed capabilities (linux-kunit/1);
-note     unsupported actions are hard-refused (SQENOC), never simulated as success.
+note   - Host-model opcode/payload/core permission checks finish before simulated effects.
+note   - These checks do not validate device register alignment, actual BAR span or permissions.
+note   - Every non-simulator mode refuses the entire dispatch (SQENOC) after token checks,
+note     before unpack/effects, until a typed MMIO lease/span and typed core binding exist.
+note   - Host flags cannot authorize hardware; unsupported actions never simulate success.
 note   - Stale token or generation returns DSPEORD (-10) without quarantine and without side effects.
 note   - Execution or prevalidation failures invoke bseqdone gen tok false, entering quarantine (state 12).
 note   - Successful execution writes back updated regSaveArea to bsevent and invokes bseqdone gen tok true.
@@ -51,13 +51,9 @@ put sqbuf i uint dspu32 add 120 mul i 4
 end
 end
 note Host model flags (dspperm/sqcore) authorize host simulation only.
-note Hardware core operations require engine-specific typed capabilities (linux-kunit/1);
-note typed hardware core binding is unavailable, and host model flags are never a capability.
-note Any non-simulator mode (gspmode != 0) unconditionally refuses core operations.
+note Whole hardware dispatch requires typed MMIO lease/span and engine-specific core capabilities.
+note dspseq refuses non-simulator modes before unpack; these permission bits are host-model only.
 fn dspcperm op ulong to bool
-if ne get gspmode 0 0
-ret false
-end
 if eq get sqcore 0 0
 ret false
 end
@@ -122,6 +118,11 @@ ret DSPEORD
 end
 if ne tok get btoken 0
 ret DSPEORD
+end
+if ne get gspmode 0 0
+bseqdone gen tok false
+put dspstat 0 SQENOC
+ret SQENOC
 end
 nw = dspu32 80
 ci = dspu32 84

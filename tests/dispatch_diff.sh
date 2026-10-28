@@ -117,8 +117,15 @@ case "$core_nonsim" in
   *) echo "dispatch_diff: FAIL core-nonsim side-effect control: $core_nonsim"; fail=1 ;;
 esac
 
+# No typed MMIO span: reject even register-only hardware sequences before the first write.
+late_reg=$(grep '^== late-invalidreg ' "$t/o.cases")
+case "$late_reg" in
+  *"rc=-7"*"state=12"*"dead=1"*"delays=0/0"*"core=0"*"nlog=0"*"violations=0"*) ;;
+  *) echo "dispatch_diff: FAIL late-invalidreg whole-dispatch refusal: $late_reg"; fail=1 ;;
+esac
+
 if [ "$fail" -eq 0 ]; then
-  echo "dispatch_diff: PASS exact trace parity, full prevalidation with zero side effects, and strict quarantine controls; hardware NOT_RUN"
+  echo "dispatch_diff: PASS host-model trace parity, payload prevalidation, hardware-dispatch refusal, and quarantine controls; hardware NOT_RUN"
   sha256sum "$here/gsp/dispatch.om" "$cases" "$here/tests/dispatch_ref.c" "$here/tests/dispatch_trace.om"
   exit 0
 else

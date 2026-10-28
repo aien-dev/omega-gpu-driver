@@ -164,6 +164,10 @@ int main(void)
 
         if (state != 11 || gen_off != 0 || tok_off != 0) {
             rc = -10;
+        } else if (mode != 0) {
+            /* No typed MMIO lease/span: refuse the WHOLE dispatch before unpack/effects.
+             * This is the explicit unavailable-effect gate, not vendor register validation. */
+            dead = 1; state = 12; rc = -7;
         } else if (bselen < 120 + (uint32_t)nw * 4) {
             dead = 1; state = 12; rc = -13;
         } else if (nw == 0) {

@@ -51,8 +51,10 @@ core8-noperm 0 4 1 0 7 0 0 11 0 0 2 1 1 8
 core8-fail 0 4 1 8 15 0 0 11 0 0 2 1 1 8
 core8-ok 0 4 1 0 15 0 0 11 0 0 2 1 1 8
 
-# 6. Non-sim mode: allpermissions+sqcore cannot activate core in non-sim mode (refuses before effect)
+# 6. Non-sim mode: whole dispatch refuses without typed MMIO span, including register-only streams.
 core-nonsim 0 4 1 0 15 0 0 11 0 1 5 4 4 0 8653504 100 5
+# A valid write precedes a misaligned register write: neither may reach MMIO.
+late-invalidreg 0 4 1 0 15 0 0 11 0 1 7 6 6 0 8653504 100 0 1 7
 
 # 7. Packet shape, capacity, and index bounds
 shape-trunc 0 4 0 0 15 0 0 11 1 0 4 3 3 0 8653504 2748

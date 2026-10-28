@@ -23,7 +23,7 @@ store save index check disabled in prevalidation|if ge k SQSAVE|if false
 bseqdone ok=false on success|d = bseqdone gen tok true|d = bseqdone gen tok false
 save register writeback dropped|dspp32 add 88 mul k 4 get sqsave k|note no writeback
 poll budget check disabled in prevalidation|if gt get sqbud 0 SQBMAX|if false
-non-sim gspmode check disabled in dspcperm|if ne get gspmode 0 0|if false
+non-sim whole-dispatch refusal disabled|if ne get gspmode 0 0|if false
 EOF
 
 killed=0
