@@ -1,0 +1,58 @@
+# tests/dispatch_cases.txt: test cases for tests/dispatch_diff.sh
+# Fields: name busy budget core corefail perms gen_off tok_off bstate pkt_trunc nwords end m w0 .. w(m-1)
+# Opcodes: 0 WRITE a v, 1 MODIFY a mask v, 2 POLL a mask v tmo err, 3 DELAY us, 4 STORE a idx, 5..8 core
+# Registers: 8653504 SEC2 EMEMC (plain), 8653824 SEC2 QUEUE_HEAD (busy), 1114356 GSP HWCFG2 (read-only)
+
+# 1. Valid dispatch cases (perms=15 = all core allowed, gen_off=0, tok_off=0, bstate=11, pkt_trunc=0)
+valid-empty 0 4 0 0 15 0 0 11 0 4 0 0
+valid-write 0 4 0 0 15 0 0 11 0 4 3 3 0 8653504 2748
+valid-modify 0 4 0 0 15 0 0 11 0 8 7 7 0 8653504 255 1 8653504 15 160
+valid-poll 0 4 0 0 15 0 0 11 0 10 9 9 0 8653504 4615 2 8653504 255 7 0 0
+valid-delay 0 4 0 0 15 0 0 11 0 3 2 2 3 50
+valid-store 0 4 0 0 15 0 0 11 0 7 6 6 0 8653504 4660 4 8653504 3
+valid-allcore 0 4 1 0 15 0 0 11 0 5 4 4 5 6 7 8
+valid-mixed 0 4 1 0 15 0 0 11 0 20 19 19 0 8653504 255 1 8653504 15 160 3 5 4 8653504 2 5 2 8653504 255 240 0 0
+
+# 2. Malformed late opcode with ZERO side effects (full prevalidation proof)
+late-unkop 0 4 1 0 15 0 0 11 0 6 5 5 0 8653504 100 4 8653504 1 99
+late-badstore 0 4 1 0 15 0 0 11 0 6 5 5 0 8653504 100 4 8653504 8
+late-overrun 0 4 1 0 15 0 0 11 0 5 4 4 0 8653504 100 1 8653504
+late-corenoc 0 4 0 0 15 0 0 11 0 5 4 4 0 8653504 100 4 8653504 1 5
+late-noperm 0 4 1 0 7 0 0 11 0 5 4 4 0 8653504 100 4 8653504 1 8
+
+# 3. Token / generation stale or invalid bstate (zero side effects, no quarantine)
+stale-gen 0 4 0 0 15 1 0 11 0 4 3 3 0 8653504 2748
+stale-tok 0 4 0 0 15 0 1 11 0 4 3 3 0 8653504 2748
+stale-both 0 4 0 0 15 1 1 11 0 4 3 3 0 8653504 2748
+bad-bstate 0 4 0 0 15 0 0 9 0 4 3 3 0 8653504 2748
+
+# 4. Poll failure and poll budget
+poll-fail 4 2 0 0 15 0 0 11 0 10 9 9 0 8653504 100 2 8653824 4294967295 16 0 0
+poll-budget-exceed 0 999999 0 0 15 0 0 11 0 4 3 3 0 8653504 2748
+
+# 5. Core opcode matrix: 4 opcodes (5..8) x (no callback, no permission, fail, ok)
+core5-nocall 0 4 0 0 15 0 0 11 0 2 1 1 5
+core5-noperm 0 4 1 0 14 0 0 11 0 2 1 1 5
+core5-fail 0 4 1 5 15 0 0 11 0 2 1 1 5
+core5-ok 0 4 1 0 15 0 0 11 0 2 1 1 5
+
+core6-nocall 0 4 0 0 15 0 0 11 0 2 1 1 6
+core6-noperm 0 4 1 0 13 0 0 11 0 2 1 1 6
+core6-fail 0 4 1 6 15 0 0 11 0 2 1 1 6
+core6-ok 0 4 1 0 15 0 0 11 0 2 1 1 6
+
+core7-nocall 0 4 0 0 15 0 0 11 0 2 1 1 7
+core7-noperm 0 4 1 0 11 0 0 11 0 2 1 1 7
+core7-fail 0 4 1 7 15 0 0 11 0 2 1 1 7
+core7-ok 0 4 1 0 15 0 0 11 0 2 1 1 7
+
+core8-nocall 0 4 0 0 15 0 0 11 0 2 1 1 8
+core8-noperm 0 4 1 0 7 0 0 11 0 2 1 1 8
+core8-fail 0 4 1 8 15 0 0 11 0 2 1 1 8
+core8-ok 0 4 1 0 15 0 0 11 0 2 1 1 8
+
+# 6. Packet shape, capacity, and index bounds
+shape-trunc 0 4 0 0 15 0 0 11 1 4 3 3 0 8653504 2748
+cap-zero 0 4 0 0 15 0 0 11 0 0 0 0
+cap-over 0 4 0 0 15 0 0 11 0 16385 0 0
+idx-over 0 4 0 0 15 0 0 11 0 4 4 3 0 8653504 2748
