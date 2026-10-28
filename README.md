@@ -59,3 +59,9 @@ Main binds the GPU to `vfio-pci` (000f:01:00.0, IOMMU group 20, alone in its gro
 Expected: config vendor/device 0x2e1210de (lspci reports [10de:2e12]) and matching map and pread
 values. The BOOT_0 architecture field (bits 28:24) is defined at nv_ref.h:129-136 (GB100 0x1A, GB200
 0x1B); which value the GB10 reports is what this run measures, not something this repo asserts.
+
+## Human-Directed Agentic Engineering
+
+Development follows Human-Directed Agentic Engineering (HDAE): humans define goals, architecture, constraints, acceptance criteria, and stopping points; agents implement, execute checks, diagnose failures, and revise within those boundaries. Human review retains responsibility for claims, acceptance, and release decisions.
+
+For the documented method and a systems-software case study, see Gregory M. Kurtzer, [*Ginux: Building an Independent Kernel That Runs Linux Userspace through Human-Directed Agentic Engineering* (2026)](https://doi.org/10.5281/zenodo.23682548). This does not change the QEMU-only status or authorize any device action.
