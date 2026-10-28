@@ -1,0 +1,654 @@
+note chan/rmchan.om: async RM object and channel allocation, scheduling, drain, and free
+note state machine for Blackwell GPFIFO channels over GSP-RM RPCs.
+note Layout source of record: NVIDIA open-gpu-kernel-modules 580.173.02 (MIT) clc96f.h,
+note cla06c.h, kernel_channel.c:2814-2821. Library unit, no main. Prefix rm / RM.
+note
+note RM object hierarchy:
+note Client -> Device; Device owns Subdevice, VASpace, ChannelGroup and ChannelGPFIFO.
+note ChannelGroup owns ContextShare. Allocation order is not a chain of parent handles.
+note
+note Schedule control:
+note   NVA06C_CTRL_CMD_GPFIFO_SCHEDULE (PACMSCH 2691432705): bEnable 1 (start) / 0 (disable).
+note
+note Teardown order:
+note   Free Channel -> Free CtxShare -> Free ChannelGroup -> Free VASpace -> Free Subdev ->
+note   Free Device -> Free Client.
+note
+note Pure protocol:
+note   rminit -> long                         resets only unbound IDLE/DONE policy, refuses retained epoch
+note   rmcfg cli dev sub vas tsg ctx -> void  configures handles
+note   rmcfgch chan chid tree pid -> void    configures channel ID, tree mode, process ID
+note   rmcfgmem gpa gn upa ipa rpa -> void    configures memory descriptors for pachan
+note   rmstart budget -> long                 initiates allocation sequence (Root or TSG)
+note   rmstep -> long                         steps state machine on bpoll (0 wait, 1 ok, 2 event, <0 err)
+note   rmsched budget -> long                 initiates channel group schedule enable
+note   rmdis budget -> long                   initiates channel group schedule disable
+note   rmdrain c budget -> long               bounded semaphore progress ONLY, not engine/cache idle
+note   rmfree budget -> long                  object RPC teardown ONLY, never frees published backing
+note
+note Typed mapped effect adapter:
+note   rmbind c gen -> long                   binds live mapped slot/epoch; replay state9 is NOT admission
+note   rmpub gen -> long                      publishes DMA window once channel is active
+note   rmlose gen -> long                     quarantines channel buffers and window on timeout/error
+note   rmsub c pb off n -> long               active bound submission with exact trailing release marker
+note The pinned hosted effects are not an Omega kernel, DMA/coherency qualification, or production gate.
+note
+note Status codes: 0 RMOK, -1 RMEINVAL, -2 RMERANGE, -3 RMESTATE, -4 RMENOMEM, -5 RMEBIND,
+note -6 RMECAP, -10 RMEGEN, -11 RMETIME, -12 RMEFAIL, -13 RMECORR, -14 RMEQUAR
+const RMOK long 0
+const RMEINVAL long -1
+const RMERANGE long -2
+const RMESTATE long -3
+const RMENOMEM long -4
+const RMEBIND long -5
+const RMECAP long -6
+const RMEGEN long -10
+const RMETIME long -11
+const RMEFAIL long -12
+const RMECORR long -13
+const RMEQUAR long -14
+note State machine states
+const RMSIDLE   ulong 0
+const RMSAROOT  ulong 1
+const RMSADEV   ulong 2
+const RMSASUB   ulong 3
+const RMSAVAS   ulong 4
+const RMSATSG   ulong 5
+const RMSACTX   ulong 6
+const RMSACHAN  ulong 7
+const RMSREADY  ulong 8
+const RMSSCHED  ulong 9
+const RMSACTV   ulong 10
+const RMSDIS    ulong 11
+const RMSDRAIN  ulong 12
+const RMSDRND   ulong 13
+const RMSFCHAN  ulong 14
+const RMSFCTX   ulong 15
+const RMSFTSG   ulong 16
+const RMSFVAS   ulong 17
+const RMSFSUB   ulong 18
+const RMSFDEV   ulong 19
+const RMSFROOT  ulong 20
+const RMSDONE   ulong 21
+const RMSTOUT   ulong 22
+const RMSERR    ulong 23
+const RMSQUAR   ulong 24
+global rmst ulong 1
+global rmrc long 1
+global rmbudget ulong 1
+global rmepoch ulong 1
+global rmtree ulong 1
+global rmchid ulong 1
+global rmhcli ulong 1
+global rmhdev ulong 1
+global rmhsub ulong 1
+global rmhvas ulong 1
+global rmhtsg ulong 1
+global rmhctx ulong 1
+global rmhchan ulong 1
+global rmgpa ulong 1
+global rmgn ulong 1
+global rmupa ulong 1
+global rmipa ulong 1
+global rmrpa ulong 1
+global rmpid ulong 1
+global rmslot ulong 1
+fn rminit to long
+s = get rmst 0
+if and ne s RMSIDLE ne s RMSDONE
+ret RMESTATE
+end
+if ne get rmepoch 0 0
+ret RMESTATE
+end
+put rmst 0 RMSIDLE
+put rmrc 0 RMOK
+put rmbudget 0 0
+put rmepoch 0 0
+put rmtree 0 0
+put rmchid 0 0
+put rmhcli 0 0
+put rmhdev 0 0
+put rmhsub 0 0
+put rmhvas 0 0
+put rmhtsg 0 0
+put rmhctx 0 0
+put rmhchan 0 0
+put rmgpa 0 0
+put rmgn 0 0
+put rmupa 0 0
+put rmipa 0 0
+put rmrpa 0 0
+put rmpid 0 0
+put rmslot 0 GMNONE
+ret RMOK
+end
+fn rmcfg cli ulong dev ulong sdev ulong vas ulong tsg ulong ctx ulong to void
+if ne get rmst 0 RMSIDLE
+put rmrc 0 RMESTATE
+ret
+end
+put rmhcli 0 cli
+put rmhdev 0 dev
+put rmhsub 0 sdev
+put rmhvas 0 vas
+put rmhtsg 0 tsg
+put rmhctx 0 ctx
+end
+fn rmcfgch chan ulong chid ulong tree ulong pid ulong to void
+if ne get rmst 0 RMSIDLE
+put rmrc 0 RMESTATE
+ret
+end
+put rmhchan 0 chan
+put rmchid 0 chid
+put rmtree 0 tree
+put rmpid 0 pid
+end
+fn rmcfgmem gpa ulong gn ulong upa ulong ipa ulong rpa ulong to void
+if ne get rmst 0 RMSIDLE
+put rmrc 0 RMESTATE
+ret
+end
+put rmgpa 0 gpa
+put rmgn 0 gn
+put rmupa 0 upa
+put rmipa 0 ipa
+put rmrpa 0 rpa
+end
+fn rmfillin to void
+for i ulong 48
+put pain i 0
+end
+put pain 0 0
+put pain 1 get rmgpa 0
+put pain 2 get rmgn 0
+put pain 3 0
+put pain 4 get rmhctx 0
+put pain 5 get rmhvas 0
+put pain 6 0
+put pain 7 get rmupa 0
+put pain 8 PAENGGR
+put pain 9 0
+put pain 10 0
+put pain 11 get rmhtsg 0
+put pain 12 0
+put pain 13 0
+put pain 14 0
+put pain 15 get rmchid 0
+put pain 16 get rmipa 0
+put pain 17 4096
+put pain 18 2
+put pain 19 0
+put pain 20 get rmupa 0
+put pain 21 512
+put pain 22 2
+put pain 23 0
+put pain 24 get rmrpa 0
+put pain 25 512
+put pain 26 2
+put pain 27 0
+put pain 36 get rmpid 0
+end
+fn rmstart budget ulong to long
+if ne get rmst 0 RMSIDLE
+ret RMESTATE
+end
+if ne get bstate 0 9
+ret RMESTATE
+end
+if eq budget 0
+ret RMEINVAL
+end
+put rmbudget 0 budget
+if eq get rmtree 0 1
+r = paroot get rmhcli 0 get rmpid 0
+if lt r 0
+ret r
+end
+r = brmalloc get rmhcli 0 0 get rmhcli 0 PACROOT budget
+if lt r 0
+ret r
+end
+put rmst 0 RMSAROOT
+ret RMOK
+end
+r = patsg 0 0 get rmhvas 0 PAENGGR
+if lt r 0
+ret r
+end
+r = brmalloc get rmhcli 0 get rmhdev 0 get rmhtsg 0 PACTSG budget
+if lt r 0
+ret r
+end
+put rmst 0 RMSATSG
+ret RMOK
+end
+fn rmsched budget ulong to long
+st = get rmst 0
+if ne st RMSREADY
+ret RMESTATE
+end
+if ne get bstate 0 9
+ret RMESTATE
+end
+if eq budget 0
+ret RMEINVAL
+end
+put rmbudget 0 budget
+r = pasched 1 0 0
+if lt r 0
+ret r
+end
+r = brmctrl get rmhcli 0 get rmhtsg 0 PACMSCH budget
+if lt r 0
+ret r
+end
+put rmst 0 RMSSCHED
+ret RMOK
+end
+fn rmdis budget ulong to long
+st = get rmst 0
+if and ne st RMSACTV ne st RMSREADY
+ret RMESTATE
+end
+if ne get bstate 0 9
+ret RMESTATE
+end
+if eq budget 0
+ret RMEINVAL
+end
+put rmbudget 0 budget
+r = pasched 0 0 0
+if lt r 0
+ret r
+end
+r = brmctrl get rmhcli 0 get rmhtsg 0 PACMSCH budget
+if lt r 0
+ret r
+end
+put rmst 0 RMSDIS
+ret RMOK
+end
+fn rmdrain c ulong budget uint to long
+if ge c CMSLOTS
+ret RMEINVAL
+end
+if ne c get rmslot 0
+ret RMEINVAL
+end
+if ne get rmepoch 0 get mmwgen 0
+ret RMEGEN
+end
+if ne get rmst 0 RMSDRAIN
+ret RMESTATE
+end
+rc = cmdrain c budget
+if ne rc CMOK
+put rmrc 0 rc
+put rmst 0 RMSTOUT
+r = rmlose get rmepoch 0
+ret RMETIME
+end
+put rmst 0 RMSDRND
+ret RMOK
+end
+fn rmfree budget ulong to long
+st = get rmst 0
+if ne st RMSDRND
+ret RMESTATE
+end
+if ne get bstate 0 9
+ret RMESTATE
+end
+if eq budget 0
+ret RMEINVAL
+end
+put rmbudget 0 budget
+r = brmfree get rmhcli 0 get rmhchan 0 budget
+if lt r 0
+ret r
+end
+put rmst 0 RMSFCHAN
+ret RMOK
+end
+fn rmerr rc long to long
+put rmrc 0 rc
+put rmst 0 RMSERR
+if eq rc RMETIME
+put rmst 0 RMSTOUT
+end
+if ne get rmepoch 0 0
+r = rmlose get rmepoch 0
+end
+ret rc
+end
+fn rmstep to long
+s = get rmst 0
+if or eq s RMSIDLE or eq s RMSREADY or eq s RMSACTV or eq s RMSDRND or eq s RMSDONE or eq s RMSTOUT or eq s RMSERR eq s RMSQUAR
+ret 0
+end
+if eq s RMSDRAIN
+ret 0
+end
+if eq get bstate 0 11
+ret 2
+end
+r = bpoll
+if eq r 0
+ret 0
+end
+if eq r 2
+ret 2
+end
+if lt r 0
+ret rmerr r
+end
+b = get rmbudget 0
+if eq s RMSAROOT
+r = padevice 0 get rmhcli 0 3 2 1099511627776
+if lt r 0
+ret rmerr r
+end
+r = brmalloc get rmhcli 0 get rmhcli 0 get rmhdev 0 PACDEV b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSADEV
+ret 1
+end
+if eq s RMSADEV
+r = pasubdev 0
+if lt r 0
+ret rmerr r
+end
+r = brmalloc get rmhcli 0 get rmhdev 0 get rmhsub 0 PACSUB b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSASUB
+ret 1
+end
+if eq s RMSASUB
+r = pavaspace 0 72 1099511627776 8589934592 65536
+if lt r 0
+ret rmerr r
+end
+r = brmalloc get rmhcli 0 get rmhdev 0 get rmhvas 0 PACVAS b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSAVAS
+ret 1
+end
+if eq s RMSAVAS
+r = patsg 0 0 get rmhvas 0 PAENGGR
+if lt r 0
+ret rmerr r
+end
+r = brmalloc get rmhcli 0 get rmhdev 0 get rmhtsg 0 PACTSG b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSATSG
+ret 1
+end
+if eq s RMSATSG
+r = pactxsh get rmhvas 0 PACTXAS 0
+if lt r 0
+ret rmerr r
+end
+r = brmalloc get rmhcli 0 get rmhtsg 0 get rmhctx 0 PACCTX b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSACTX
+ret 1
+end
+if eq s RMSACTX
+rmfillin
+r = pachan
+if lt r 0
+ret rmerr r
+end
+r = brmalloc get rmhcli 0 get rmhdev 0 get rmhchan 0 PACGPF b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSACHAN
+ret 1
+end
+if eq s RMSACHAN
+put rmst 0 RMSREADY
+ret 1
+end
+if eq s RMSSCHED
+put chopen get rmslot 0 1
+put rmst 0 RMSACTV
+ret 1
+end
+if eq s RMSDIS
+put chopen get rmslot 0 2
+put rmst 0 RMSDRAIN
+ret 1
+end
+if eq s RMSFCHAN
+r = brmfree get rmhcli 0 get rmhctx 0 b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSFCTX
+ret 1
+end
+if eq s RMSFCTX
+r = brmfree get rmhcli 0 get rmhtsg 0 b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSFTSG
+ret 1
+end
+if eq s RMSFTSG
+if eq get rmtree 0 1
+r = brmfree get rmhcli 0 get rmhvas 0 b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSFVAS
+ret 1
+end
+put rmst 0 RMSDONE
+ret 1
+end
+if eq s RMSFVAS
+r = brmfree get rmhcli 0 get rmhsub 0 b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSFSUB
+ret 1
+end
+if eq s RMSFSUB
+r = brmfree get rmhcli 0 get rmhdev 0 b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSFDEV
+ret 1
+end
+if eq s RMSFDEV
+r = brmfree get rmhcli 0 get rmhcli 0 b
+if lt r 0
+ret rmerr r
+end
+put rmst 0 RMSFROOT
+ret 1
+end
+if eq s RMSFROOT
+put rmst 0 RMSDONE
+ret 1
+end
+ret 0
+end
+fn rmbind c ulong gen ulong to long
+if ge c CMSLOTS
+ret RMEINVAL
+end
+if or ne get rmst 0 RMSIDLE ne get rmepoch 0 0
+ret RMESTATE
+end
+if ne get mmwkind 0 1
+ret RMECAP
+end
+if or lt get mmwst 0 MMWDMA ge get mmwst 0 MMWQUAR
+ret RMESTATE
+end
+if ne get mmwgen 0 gen
+ret RMEGEN
+end
+if or ne get chopen c 2 ne get chepoch c gen
+ret RMEBIND
+end
+in = get chin c
+ud = get chud c
+gp = get chgp c
+if or or ge in GMMAXB ge ud GMMAXB ge gp GMMAXB
+ret RMEINVAL
+end
+if or or not gmlive in not gmlive ud not gmlive gp
+ret RMECAP
+end
+if or ne get rqdead 0 0 ne get bstate 0 9
+ret RMECAP
+end
+put rmslot 0 c
+put rmepoch 0 gen
+note Vendor mem_utils_gm107.c:1232 uses a GPU virtual address, not backing PA.
+put rmgpa 0 get gmbva gp
+put rmgn 0 ulong get chent c
+put rmupa 0 get gmbpa ud
+put rmipa 0 get gmbpa in
+put rmrpa 0 get gmbpa in
+put rmchid 0 ulong get chchid c
+ret RMOK
+end
+fn rmpub gen ulong to long
+if ne gen get rmepoch 0
+ret RMEGEN
+end
+if ne get rmst 0 RMSACTV
+ret RMESTATE
+end
+ret mmwpublish gen
+end
+fn rmlose gen ulong to long
+if ne gen get rmepoch 0
+ret RMEGEN
+end
+c = get rmslot 0
+if ne c GMNONE
+in = get chin c
+ud = get chud c
+gp = get chgp c
+if and lt in GMMAXB gmlive in
+r = gmquar in
+end
+if and lt ud GMMAXB gmlive ud
+r = gmquar ud
+end
+if and lt gp GMMAXB gmlive gp
+r = gmquar gp
+end
+end
+if eq get mmwst 0 MMWPUB
+r = mmwquar gen
+end
+put rmst 0 RMSQUAR
+ret RMOK
+end
+fn rmsub c ulong pb ulong off uint n uint to long
+if ge c CMSLOTS
+ret RMEINVAL
+end
+if ne c get rmslot 0
+ret RMEINVAL
+end
+if ne get rmst 0 RMSACTV
+ret RMESTATE
+end
+if ne get rmepoch 0 get mmwgen 0
+ret RMEGEN
+end
+if ne get mmwst 0 MMWPUB
+ret RMESTATE
+end
+if or ne get chopen c 1 ne get chepoch c get mmwgen 0
+ret RMESTATE
+end
+st = get cmst c
+if and and ne st CMSBIND ne st CMSACTV ne st CMSIDLE
+ret RMESTATE
+end
+if ne get cmgen c get mmwgen 0
+ret RMEGEN
+end
+if not gmlive get cmbuf c
+ret RMEBIND
+end
+if ne get cmbgen c ulong get gmbgen get cmbuf c
+ret RMEGEN
+end
+if not gmlive pb
+ret RMEBIND
+end
+ent = get chent c
+p = get cmput c
+if or lt ent 2 ge sub p get cmret c sub ent 1
+ret RMEBIND
+end
+if or ne p get chput c ne get cmret c get chret c
+ret RMEBIND
+end
+r = rmtail c pb off n
+if ne r RMOK
+ret r
+end
+r = chsubmit c pb off n
+if ne r CHOK
+ret r
+end
+note No fallible checks after publication: the preflight proves cmsub(c,1)'s predicates.
+put cmput c add p uint 1
+put cmst c CMSACTV
+ret RMOK
+end
+note Pure submission preflight; immutable backing is read before the ring entry is published.
+fn rmtail c ulong pb ulong off uint n uint to long
+if or ne and off 3 0 lt n uint CMCWDS
+ret RMEINVAL
+end
+if gt n CHLENMX
+ret RMERANGE
+end
+bytes = mul ulong n 4
+if gt add ulong off bytes get gmbsz pb
+ret RMERANGE
+end
+va = add get gmbva pb ulong off
+if ge va CHVALIM
+ret RMERANGE
+end
+r = cmrel 0 get cmva c add get cmput c uint 1
+if ne r long CMCWDS
+ret RMEBIND
+end
+va = add get gmbpa pb ulong off
+va = add va bytes
+va = sub va mul CMCWDS 4
+for i ulong CMCWDS
+if ne uint mmrd32 add va mul i 4 get cmwds i
+ret RMEBIND
+end
+end
+ret RMOK
+end

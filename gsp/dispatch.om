@@ -1,0 +1,203 @@
+note gsp/dispatch.om: connects validated GSP_RUN_CPU_SEQUENCER (0x1002) event in bstate 11
+note to sqrun (gsp/seq.om) and bseqdone (gsp/boot.om).
+note Sources:
+note   open-gpu-kernel-modules-580.173.02:
+note     src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c:432-443 (_kgspRpcRunCpuSequencer)
+note     src/nvidia/src/kernel/gpu/gsp/kernel_gsp.c:5297-5432 (kgspExecuteSequencerBuffer_IMPL)
+note     src/nvidia/src/kernel/gpu/gsp/arch/ampere/kernel_gsp_ga102.c:136-200 (kgspExecuteSequencerCommand_GA102)
+note     src/nvidia/arch/nvalloc/common/inc/rmgspseq.h:78-101, 203-219
+note     src/nvidia/generated/g_rpc-structures.h:1535-1544 (rpc_run_cpu_sequencer_v17_00)
+note Reference:
+note   omega-driver-reference native/kernel/gpu/gsp_seq.{h,c}
+note Contracts:
+note   - Host-model opcode/payload/core permission checks finish before simulated effects.
+note   - These checks do not validate device register alignment, actual BAR span or permissions.
+note   - Every non-simulator mode refuses the entire dispatch (SQENOC) after token checks,
+note     before unpack/effects, until a typed MMIO lease/span and typed core binding exist.
+note   - Host flags cannot authorize hardware; unsupported actions never simulate success.
+note   - Stale token or generation returns DSPEORD (-10) without quarantine and without side effects.
+note   - Execution or prevalidation failures invoke bseqdone gen tok false, entering quarantine (state 12).
+note   - Successful execution writes back updated regSaveArea to bsevent and invokes bseqdone gen tok true.
+const DSPOK long 0
+const DSPEORD long -10
+const DSPEPKT long -13
+const DSPMRST ulong 1
+const DSPMSTR ulong 2
+const DSPMHLT ulong 4
+const DSPMRSM ulong 8
+const DSPMALL ulong 15
+global dspperm ulong 1
+global dspops ulong 1
+global dspcore ulong 1
+global dspstat long 1
+global dspwb uchar 64
+global dspwl ulong 1
+text dspwt "empty buffer|cmdIndex not inside the buffer|unknown opcode|opcode overruns cmdIndex|poll timed out|save index out of range|core opcode with no core callback|core opcode failed|nwords over 16384|delay sleep failed|poll budget over 999998|stale token or invalid state|remote error quarantined|packet shape truncated|"
+fn dspu32 o ulong to ulong
+v = ulong 0
+for i ulong 4
+v = or v shl ulong get bsevent add o i mul i 8
+end
+ret v
+end
+fn dspp32 o ulong v ulong to void
+for i ulong 4
+put bsevent add o i uchar and shr v mul i 8 255
+end
+end
+fn dspunpk nw ulong to void
+for i ulong nw
+put sqbuf i uint dspu32 add 120 mul i 4
+end
+end
+note Host model flags (dspperm/sqcore) authorize host simulation only.
+note Whole hardware dispatch requires typed MMIO lease/span and engine-specific core capabilities.
+note dspseq refuses non-simulator modes before unpack; these permission bits are host-model only.
+fn dspcperm op ulong to bool
+if eq get sqcore 0 0
+ret false
+end
+if or lt op SQCRST gt op SQCRES
+ret false
+end
+shf = sub op SQCRST
+bit = shl ulong 1 shf
+ret ne and get dspperm 0 bit 0
+end
+note Caller dspseq already refused empty, over-capacity and out-of-range cmdIndex before dspunpk;
+note sqrun refuses an over-limit poll budget before its first effect.
+fn dspprev nw ulong ci ulong to long
+put dspops 0 0
+put dspcore 0 0
+i = ulong 0
+while lt i ci bound 999999
+op = sqw i
+i = add i 1
+n = sqpay op
+if eq n M32
+ret SQEOP
+end
+if gt add i n ci
+ret SQEOVR
+end
+if eq op SQSTO
+k = sqw add i 1
+if ge k SQSAVE
+ret SQESAVE
+end
+end
+if and ge op SQCRST le op SQCRES
+shf = sub op SQCRST
+bit = shl ulong 1 shf
+put dspops 0 or get dspops 0 bit
+put dspcore 0 add get dspcore 0 1
+if not dspcperm op
+ret SQENOC
+end
+end
+i = add i n
+end
+ret 0
+end
+fn dspseq gen ulong tok ulong to long
+if ne get bstate 0 11
+ret DSPEORD
+end
+if ne gen get bgen 0
+ret DSPEORD
+end
+if ne tok get btoken 0
+ret DSPEORD
+end
+if ne get gspmode 0 0
+z = bseqdone gen tok false
+put dspstat 0 SQENOC
+ret SQENOC
+end
+nw = dspu32 80
+ci = dspu32 84
+if lt get bselen 0 add 120 mul nw 4
+z = bseqdone gen tok false
+put dspstat 0 DSPEPKT
+ret DSPEPKT
+end
+if eq nw 0
+z = bseqdone gen tok false
+put dspstat 0 SQEEMP
+ret SQEEMP
+end
+if gt nw SQMAX
+z = bseqdone gen tok false
+put dspstat 0 SQECAP
+ret SQECAP
+end
+if ge ci nw
+z = bseqdone gen tok false
+put dspstat 0 SQEIDX
+ret SQEIDX
+end
+dspunpk nw
+r = dspprev nw ci
+if ne r 0
+z = bseqdone gen tok false
+put dspstat 0 r
+ret r
+end
+for k ulong SQSAVE
+put sqsave k dspu32 add 88 mul k 4
+end
+r = sqrun nw ci
+if ne r 0
+z = bseqdone gen tok false
+put dspstat 0 r
+ret r
+end
+for k ulong SQSAVE
+dspp32 add 88 mul k 4 get sqsave k
+end
+d = bseqdone gen tok true
+put dspstat 0 d
+ret d
+end
+fn dspauto to long
+ret dspseq get bgen 0 get btoken 0
+end
+fn dspinit to void
+put dspstat 0 0
+put dspops 0 0
+put dspcore 0 0
+put dspperm 0 0
+end
+fn dspperms m ulong to void
+put dspperm 0 m
+end
+fn dspwhy e long to void
+put dspwl 0 0
+if ge e 0
+ret
+end
+k = ulong sub 0 add e 1
+if eq e DSPEORD
+k = 11
+end
+if eq e -12
+k = 12
+end
+if eq e DSPEPKT
+k = 13
+end
+w = ulong 0
+o = ulong 0
+for j ulong len dspwt
+c = get dspwt j
+if eq c 124
+w = add w 1
+else
+if eq w k
+put dspwb o c
+o = add o 1
+end
+end
+end
+put dspwl 0 o
+end

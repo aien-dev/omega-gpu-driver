@@ -2,7 +2,7 @@ note tests/chan_trace.om: the differential trace driver for the channel port. It
 note native/kernel/tests/gpu_chan_trace.c (branch pr441 @ c5bb3a4b) line for line on chan/sim.om and
 note prints the same text: after every operation its rc, every register access the simulator logged
 note since the last line, the doorbell count and FNV-1a 64 of the whole 8 MiB simulated memory.
-note Build: cat chan/gmmu.om chan/mem.om chan/chan.om chan/sim.om tests/chan_trace.om | omc > prog.
+note Build: cat chan/dma.om chan/gmmu.om chan/mem.om chan/chan.om chan/sim.om tests/chan_trace.om | omc > prog.
 note Prefix ct. Host only: mmmode is 0 (the simulator) for the whole run.
 note memory: 8 MiB at bus address 0x80000000, page-table pool there (64 pages), data at 0x80040000
 note (128 pages), GPU VA base 0x200000000

@@ -46,7 +46,7 @@ else
   fi
   run "$t/ctrace" > "$t/c.txt" || { echo "chan_diff: FAIL C reference run"; exit 2; }
 fi
-if ! cat "$GMMU_OM" "$MEM_OM" "$CHAN_OM" "$GSIM_OM" "$here/tests/chan_trace.om" | run "$OMC" > "$t/omtrace"; then
+if ! cat "$here/chan/dma.om" "$GMMU_OM" "$MEM_OM" "$CHAN_OM" "$GSIM_OM" "$here/tests/chan_trace.om" | run "$OMC" > "$t/omtrace"; then
   echo "chan_diff: FAIL omc build"; exit 3
 fi
 chmod +x "$t/omtrace"

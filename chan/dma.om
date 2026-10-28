@@ -1,0 +1,44 @@
+note chan/dma.om: production whole-window VFIO DMA transport for chan/gmmu.om.
+note Linux include/uapi/linux/vfio.h struct vfio_iommu_type1_dma_map/unmap.
+note Compiler397e6704 validates a live RW handle in vaddr and substitutes its base/whole size.
+note No open, close, reset, container adoption or authorization is performed here.
+note mmdmaop 1 maps; 2 unmaps. mmduout is actual unmapped bytes, only meaningful after rc0.
+global mmduout ulong 1
+fn mmdput b edit uchar 32 off ulong v ulong to void
+for i ulong 8
+put b add off i uchar and shr v mul i 8 255
+end
+end
+fn mmdget b view uchar 32 off ulong to ulong
+v = ulong 0
+for i ulong 8
+v = or v shl ulong get b add off i mul i 8
+end
+ret v
+end
+fn mmdmaop op ulong fd int h long iova ulong size ulong to long
+b = new uchar 32 0
+put mmduout 0 0
+if eq op 1
+put b 0 32
+put b 4 3
+mmdput b 8 ulong h
+mmdput b 16 iova
+mmdput b 24 size
+ret vfioctl fd 15217 b 0 32
+end
+if ne op 2
+ret -22
+end
+put b 0 24
+mmdput b 8 iova
+mmdput b 16 size
+r = vfioctl fd 15218 b 0 24
+if eq r 0
+put mmduout 0 mmdget b 16
+end
+ret r
+end
+fn mmdrop h long to long
+ret mapdrop h
+end

@@ -1,0 +1,17 @@
+note Source classifier ONLY, never measured identity, device authority, or firmware authentication.
+note NVIDIA580.173.02 nv_ref.h:149-182 BOOT42 architecture29:24, implementation23:20.
+note nv_arch.h:51,111 GB1XX/GB10B; g_kern_fsp_nvoc.c:227-236 FSP missing for GB10B.
+note g_kernel_sec2_nvoc.c:446-481 GB10B boots GSP-FMC via SEC2 with COT version1.
+note nv-firmware-chip-family-select.h:58-62 selects gb10y, not gb10x, for this source profile.
+note WolframLanguageEvaluator {FromDigits["1A",16],FromDigits["0B",16],FromDigits["A00",16],FromDigits["110C00",16],BitOr[BitShiftLeft[FromDigits["1A",16],24],BitShiftLeft[FromDigits["0B",16],20]]} -> {26,11,2560,1117184,447741952}.
+const GPBOOT ulong 2560
+const GPNOTIF ulong 1117184
+fn gpchip boot42 uint to long
+if ne and shr ulong boot42 24 63 26
+ret -95
+end
+if ne and shr ulong boot42 20 15 11
+ret -95
+end
+ret 1
+end

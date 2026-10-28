@@ -1,11 +1,25 @@
 {
-  "schema_version": "1.0.0",
-  "name": "omega-gpu-driver",
+  "extensions": {
+    "generated": {
+      "children": [],
+      "children_root": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "compiled_at": "2026-10-28T20:33:55Z",
+      "compiler": "crumb-compile/1",
+      "digest": "sha256:314be256c7b22a0aef9ee883a933b8da619d15508b505fa32be081337726014e",
+      "evidence_files": 0,
+      "evidence_root": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "files": 109,
+      "generated_at_commit": "85bd62a66d8772ec50da54d4a645a252f7ef38f7",
+      "source_tree": "sha256:b1f99f4154825a2e3908ef39ca3359bcabeba8cb0b55c8df9e59661c788c2431"
+    }
+  },
   "layer": "driver",
-  "purpose": "Omega GPU driver for the GB10, written in seeded Omega. W0: bind-read-release identity probe over VFIO.",
+  "name": "omega-gpu-driver",
   "parent": {
-    "repo": "aien-dev/omega-mv",
     "commit": "7ae2aef9b21a3885effa246975b123d5aa83f37b",
+    "repo": "aien-dev/omega-mv",
     "why": "the seeded compiler (omc) and its vfioctl/vfiomap words"
-  }
+  },
+  "purpose": "Omega GPU driver for the GB10, written in seeded Omega. W0: bind-read-release identity probe over VFIO.",
+  "schema_version": "1.0.0"
 }

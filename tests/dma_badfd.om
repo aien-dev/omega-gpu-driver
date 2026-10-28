@@ -1,0 +1,26 @@
+note Production chan/dma.om transport: anonymous CPU memory and invalid fd -1 only.
+note The compiler mutates vaddr during MAP_DMA validation even when the ioctl returns EBADF.
+note A second identical attempt must still reach EBADF rather than treating a CPU address as a handle.
+fn dbcheck ok bool to void
+if not ok
+exit 1
+end
+end
+fn main to int
+dbcheck eq mmwalloc 2147483648 4096 MMOK
+g = get mmwgen 0
+h = get mmwh 0
+dbcheck eq mmwpublish g MMESTATE
+dbcheck eq mmwdmap g -1 MMEIO
+dbcheck eq get mmwerr 0 -9
+dbcheck eq get mmwst 0 MMWOWN
+dbcheck eq mmwdmap g -1 MMEIO
+dbcheck eq get mmwerr 0 -9
+dbcheck eq get mmwst 0 MMWOWN
+mmwr64 2147483648 42
+dbcheck eq mapget h 0 8 42
+dbcheck eq mmwclose g MMOK
+dbcheck eq get mmwh 0 0
+dbcheck eq mmwdmap g -1 MMEGEN
+ret 0
+end

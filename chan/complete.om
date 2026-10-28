@@ -1,0 +1,379 @@
+note chan/complete.om: completion semaphore producer/consumer protocol, command encoding,
+note wrap-safe sequence progress tracking, and bounded drain policy for Blackwell GPFIFO channels.
+note Layout source of record: NVIDIA open-gpu-kernel-modules 580.173.02 (MIT) clc96f.h:75-89,
+note uvm_hopper_host.c:45-52. Library unit, no main. Prefix cm / CM.
+note
+note Blackwell USERD (Nvc96fControl, clc96f.h:29-33) has GPPut at offset 0x8c (140) and NO GPGet;
+note Ignored01 covers bytes 0x90..0x1ff (512 bytes). Completion is tracked exclusively through
+note hardware semaphores released into host-visible memory, never via caller assertion or GPGet.
+note
+note Pure protocol:
+note   cmhdr subc count -> uint               incMethod header (2<<28 | count<<16 | subc<<13 | 23)
+note   cmrel subc va seq -> long              encodes 5-method release command into cmwds[0..5]
+note   cmacq subc va seq -> long              encodes 5-method acquire command into cmwds[0..5]
+note   cmprog ret put obs -> long             wrap-safe sequence check; returns newly completed entries,
+note                                          0 for pending, or CMESTALE (-5) for out-of-order/wrapped
+note   cmputpb b off subc va seq -> long      writes 6-word release command into pushbuffer b at offset off
+note
+note Typed mapped effect adapter:
+note   cminit -> long                         initializes only unused tracker state; refuses retained bindings
+note   cmbind c slot off gen -> long          verifies mapped host capabilities; never hardware admission
+note   cmsub c count -> long                  accounts only already-submitted channel entries within capacity
+note   cmpoll c -> long                       polls memory via mmrd32, advances retired, calls chretire
+note   cmdrain c budget -> long               bounded poll loop; quarantines backing on timeout/error
+note   cmquar c gen -> long                   uncertainty latch; quarantines semaphore and window
+note
+note Status codes: 0 CMOK, -1 CMEINVAL, -2 CMEALIGN, -3 CMERANGE, -4 CMESTATE, -5 CMESTALE,
+note -6 CMEFULL, -10 CMEGEN, -11 CMETIME, -12 CMEQUAR. No CPU/GPU ordering or cache flush is implied.
+note Vendor uvm_hopper_host.c:43 requires wfi_membar before release. cmrel is ONLY the release packet.
+note Production use additionally needs a qualified engine/cache fence and ordered mapped effects.
+const CMOK long 0
+const CMEINVAL long -1
+const CMEALIGN long -2
+const CMERANGE long -3
+const CMESTATE long -4
+const CMESTALE long -5
+const CMEFULL long -6
+const CMEGEN long -10
+const CMETIME long -11
+const CMEQUAR long -12
+note NVC96F method byte offsets
+const CMSADDR ulong 92
+const CMSHI ulong 96
+const CMSPLO ulong 100
+const CMSPHI ulong 104
+const CMSEXEC ulong 108
+note Method index in method space: 0x5c / 4 = 23
+const CMSEMM uint 23
+note CHNINC header (2 << 28) = 536870912
+const CMINC uint 536870912
+const CMCWDS ulong 6
+note Channel slots
+const CMSLOTS ulong 4
+note Tracker states
+const CMSNONE ulong 0
+const CMSBIND ulong 1
+const CMSACTV ulong 2
+const CMSDRN  ulong 3
+const CMSIDLE ulong 4
+const CMSTOUT ulong 5
+const CMSQST  ulong 6
+global cmwds uint 6
+global cmlen ulong 1
+global cmgen ulong 4
+global cmbuf ulong 4
+global cmbgen ulong 4
+global cmpa ulong 4
+global cmva ulong 4
+global cmret uint 4
+global cmput uint 4
+global cmst ulong 4
+fn cmhdr subc uint count uint to uint
+ret or or CMINC shl and count 1023 16 or shl and subc 7 13 CMSEMM
+end
+fn cmrel subc uint va ulong seq uint to long
+if gt subc 7
+ret CMEINVAL
+end
+if ne and va 3 0
+ret CMEALIGN
+end
+if or eq va 0 ge va MMVALIM
+ret CMERANGE
+end
+put cmwds 0 cmhdr subc 5
+put cmwds 1 and uint and va 4294967295 4294967292
+put cmwds 2 and uint shr va 32 33554431
+put cmwds 3 seq
+put cmwds 4 0
+put cmwds 5 1
+put cmlen 0 CMCWDS
+ret long CMCWDS
+end
+fn cmacq subc uint va ulong seq uint to long
+if gt subc 7
+ret CMEINVAL
+end
+if ne and va 3 0
+ret CMEALIGN
+end
+if or eq va 0 ge va MMVALIM
+ret CMERANGE
+end
+put cmwds 0 cmhdr subc 5
+put cmwds 1 and uint and va 4294967295 4294967292
+put cmwds 2 and uint shr va 32 33554431
+put cmwds 3 seq
+put cmwds 4 0
+put cmwds 5 0
+put cmlen 0 CMCWDS
+ret long CMCWDS
+end
+fn cmprog ret_ uint put_ uint obs uint to long
+inflight = sub put_ ret_
+if eq inflight 0
+if eq obs ret_
+ret 0
+end
+ret CMESTALE
+end
+prog = sub obs ret_
+if eq prog 0
+ret 0
+end
+if gt prog inflight
+ret CMESTALE
+end
+ret long prog
+end
+fn cmputpb b ulong off uint subc uint va ulong seq uint to long
+if ge b GMMAXB
+ret CMEINVAL
+end
+if not gmlive b
+ret CMEINVAL
+end
+if ne and off 3 0
+ret CMEALIGN
+end
+sz = get gmbsz b
+span = mul CMCWDS 4
+if or gt ulong off sz gt span sub sz ulong off
+ret CMERANGE
+end
+rc = cmrel subc va seq
+if lt rc 0
+ret rc
+end
+pa = add get gmbpa b ulong off
+for i ulong 6
+mmwr32 add pa mul i 4 ulong get cmwds i
+end
+ret long CMCWDS
+end
+fn cminit to long
+for c ulong CMSLOTS
+st = get cmst c
+if ne st CMSNONE
+ret CMESTATE
+end
+end
+for c ulong CMSLOTS
+put cmgen c 0
+put cmbuf c GMNONE
+put cmbgen c 0
+put cmpa c 0
+put cmva c 0
+put cmret c 0
+put cmput c 0
+put cmst c CMSNONE
+end
+put cmlen 0 0
+ret CMOK
+end
+fn cmbind c ulong slot ulong off uint gen ulong to long
+if ge c CMSLOTS
+ret CMEINVAL
+end
+if ne get mmwkind 0 1
+ret CMESTATE
+end
+if or lt get mmwst 0 MMWDMA ge get mmwst 0 MMWQUAR
+ret CMESTATE
+end
+if ne get mmwgen 0 gen
+ret CMEGEN
+end
+if ge slot GMMAXB
+ret CMEINVAL
+end
+if not gmlive slot
+ret CMEINVAL
+end
+if ne get cmst c CMSNONE
+ret CMESTATE
+end
+if or eq get chopen c 0 ne get chepoch c gen
+ret CMESTATE
+end
+if ne get chret c get chput c
+ret CMESTATE
+end
+if eq and get gmbfl slot GMHPOLL 0
+ret CMESTATE
+end
+if ne get gmbca slot 1
+ret CMESTATE
+end
+if ne and off 3 0
+ret CMEALIGN
+end
+sz = get gmbsz slot
+if gt add ulong off 4 sz
+ret CMERANGE
+end
+pa = add get gmbpa slot ulong off
+va = add get gmbva slot ulong off
+put cmgen c gen
+put cmbuf c slot
+put cmbgen c ulong get gmbgen slot
+put cmpa c pa
+put cmva c va
+put cmret c get chput c
+put cmput c get chput c
+put cmst c CMSBIND
+mmwr32 pa ulong get chput c
+ret CMOK
+end
+fn cmsub c ulong count uint to long
+if ge c CMSLOTS
+ret CMEINVAL
+end
+st = get cmst c
+if and and ne st CMSBIND ne st CMSACTV ne st CMSIDLE
+ret CMESTATE
+end
+if ne get mmwgen 0 get cmgen c
+ret CMEGEN
+end
+if ne get mmwst 0 MMWPUB
+ret CMESTATE
+end
+b = get cmbuf c
+if not gmlive b
+ret CMESTATE
+end
+if ne get cmbgen c ulong get gmbgen b
+ret CMEGEN
+end
+ent = get chent c
+if or eq count 0 eq ent 0
+ret CMEINVAL
+end
+p = get cmput c
+r = get cmret c
+inflight = sub p r
+if ge inflight ent
+ret CMEFULL
+end
+if gt count sub sub ent 1 inflight
+ret CMEFULL
+end
+chp = get chput c
+if ne r get chret c
+ret CMESTALE
+end
+avail = sub chp p
+if or ge avail ent gt count avail
+ret CMERANGE
+end
+put cmput c add p count
+put cmst c CMSACTV
+ret CMOK
+end
+fn cmpoll c ulong to long
+if ge c CMSLOTS
+ret CMEINVAL
+end
+st = get cmst c
+if and and and ne st CMSBIND ne st CMSACTV ne st CMSDRN ne st CMSIDLE
+ret CMESTATE
+end
+if ne get mmwgen 0 get cmgen c
+ret CMEGEN
+end
+if ne get mmwst 0 MMWPUB
+ret CMESTATE
+end
+b = get cmbuf c
+if not gmlive b
+ret CMESTATE
+end
+if ne get cmbgen c ulong get gmbgen b
+ret CMEGEN
+end
+pa = get cmpa c
+obs = uint mmrd32 pa
+r = get cmret c
+p = get cmput c
+diff = cmprog r p obs
+if lt diff 0
+ret diff
+end
+if eq diff 0
+ret 0
+end
+put cmret c obs
+chretire c obs
+if eq obs p
+put cmst c CMSIDLE
+end
+ret diff
+end
+fn cmdrain c ulong budget uint to long
+if ge c CMSLOTS
+ret CMEINVAL
+end
+st = get cmst c
+if and and and ne st CMSBIND ne st CMSACTV ne st CMSDRN ne st CMSIDLE
+ret CMESTATE
+end
+if ne get mmwgen 0 get cmgen c
+ret CMEGEN
+end
+if ne get mmwst 0 MMWPUB
+ret CMESTATE
+end
+b = get cmbuf c
+if not gmlive b
+ret CMESTATE
+end
+if ne get cmbgen c ulong get gmbgen b
+ret CMEGEN
+end
+if or ne get cmput c get chput c ne get cmret c get chret c
+ret CMESTALE
+end
+if eq get cmret c get cmput c
+put cmst c CMSIDLE
+ret CMOK
+end
+put cmst c CMSDRN
+drained = false
+for i uint budget
+r = cmpoll c
+if lt r 0
+break
+end
+if eq get cmret c get cmput c
+drained = true
+break
+end
+end
+if drained
+put cmst c CMSIDLE
+ret CMOK
+end
+put cmst c CMSTOUT
+note b is live under a published owned window: gmquar retires it AND quarantines the window (gmretire).
+r = gmquar b
+put cmst c CMSQST
+ret CMETIME
+end
+fn cmquar c ulong gen ulong to long
+if ge c CMSLOTS
+ret CMEINVAL
+end
+if ne gen get cmgen c
+ret CMEGEN
+end
+b = get cmbuf c
+if ne b GMNONE
+r = gmquar b
+end
+if eq get mmwst 0 MMWPUB
+r = mmwquar gen
+end
+put cmst c CMSQST
+ret CMOK
+end

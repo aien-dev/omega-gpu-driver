@@ -1,0 +1,78 @@
+transport-host-receipt: mapped GSP queue transport, sequencer dispatch, RM channel scheduling and
+completion-semaphore slices. Evidence label: EXERCISED (Linux host process, anonymous mappings and
+host peers). Hardware, VFIO device open, MMIO, DMA, IRQ, firmware boot and kernel execution: NOT_RUN.
+Date: 2026-10-25. Branch feat/gsp-boot-rpc (aien-dev/omega-gpu-driver), commit that adds this file.
+
+Toolchain
+  omc   omega-mv@397e6704 seed/out/omc sha256 bcfa582892afca8f65e551fe56867d918d86e84540c7381be8fa9ef18d0cf0f6
+        (linked as build/omc for tests/window_sim.sh, which checks it against tools/omc.pin)
+  aienux reference c5bb3a4b9898257658aba0b7178a3c73a0371c27 (AIENUX=/tmp/omega-driver-reference)
+  vendor source open-gpu-kernel-modules 580.173.02 @20e4e6e19cc26ba47b5cbe23130a396be100c427
+  test-only oracles: gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0; GNU objdump (Binutils for Ubuntu)
+  2.42; Python 3.12.3. None is linked into the driver.
+
+Command (every script, one run, all rc=0)
+  export AIENUX=/tmp/omega-driver-reference OMC=$PWD/build/omc
+  for s in tests/*.sh; do sh "$s"; done
+
+Results (final lines)
+  arena_diff        PASS exact arena bytes, plan, COT, preboot attach/INIT_DONE seam and negative refusals
+  boot_dma          PASS owned staging, generations, publication refusal, timeout quarantine; 2 mutants detected
+  chan_diff         PASS 391 lines identical, .om vs C reference
+  complete_diff     PASS 33 lines identical, .om vs C reference
+  dispatch_diff     PASS (dispatch.om f4782e7c..d35, cases f266556b..5e4, ref 69b4b34a..f0f)
+  dispatch_mutants  12 killed, 0 survived, 0 invalid
+  dma_host          23 replay/boundary cases PASS; 11 mutants killed
+  fw_diff           PASS 47 stdout lines and 6 files identical; 9/9 negative controls refused
+  mmio_diff         PASS 3228 lines identical, 16 scenarios
+  mutants-arena     PASS behavior-only controls
+  mutants-chan      29 killed, 0 survived, 0 invalid
+  mutants-complete  8 total, 8 killed, 0 survived, 0 invalid
+  mutants-fw        20 killed, 0 survived, 0 invalid
+  mutants-mmio      22 killed, 0 survived, 0 invalid
+  mutants-rmchan    11 total, 11 killed, 0 survived, 0 invalid
+  mutants-rpc       PASS all behavior controls detected
+  mutants-seq       31 killed, 0 survived, 0 invalid
+  mutants-sysinfo   20 killed, 0 survived, 0 invalid
+  mutants-window    18/18 killed
+  params_diff       PASS 200 lines identical; corrupted-byte control refused
+  pm_gate           PASS 5 cases; both gate mutants red
+  rmchan_diff       PASS 59 lines identical, .om vs C reference
+  rpc_diff          PASS
+  seq_diff          PASS 41 cases identical trace+exit
+  sysinfo_diff      PASS 57 cases identical stdout+exit+bytes
+  transport_host    PASS 17 composed cases; post-publication notification failure quarantines;
+                    10 behavior mutants detected; generated DSB SY/store/DSB SY and DSB SY/load/DSB SY,
+                    missing-fence checker mutant detected; ordering probe sha256
+                    2b33f4673b427ba44927634874faf427ee9e70fce0a97724fade30176b65a4a7
+  window_sim        PASS 138 checks, 20 scenarios (needs build/omc matching tools/omc.pin; without it the
+                    same tree fails 44 checks at W0, as the script requires)
+
+Source sha256 at this run
+  d2783f4afe87b5b25973697dcbb0f94458c2dba7f063ad4aace3ac1fb049c7fe  gsp/transport.om
+  bbfbd7a8065aaad427930c562928db450a112a2c85991dd31e3cc23a3aa5c2df  gsp/notify.om
+  63822b230a01f57f6cb96d7a4f1bf6edbc6c96ecaaa22b6bb616eed71740a1c4  gsp/profile.om
+  dc6ea00392d46e458422f1abe59df6507e47491c546d9b1141d2c38fd046c1bd  gsp/service.om
+  f4782e7c284a6c4ac7ff00466b23ee1dbcd1d733ed532aa61458d36c99673d35  gsp/dispatch.om
+  97f7615844a3fd8ceac7a1cb33c28db307ec8879e7235cbdc66baddd3653a12d  chan/chan.om
+  100598d52fac6473e450a3c20ea1ec3aa23ec8ed21cfca21f5f104c360170d21  chan/complete.om
+  508be5939bc23b5cddb91742ac6351195cf4b579279271d4e09fc5525871986a  chan/rmchan.om
+  301f04c45817e0cba43ec103e626e003898a836c97ee8de847518231979a12b2  tests/transport_trace.om
+  dc407e930f8a0f9133f9eceb5a85604d72618f9086ccb31f6b7c97f1e5703e89  tests/rmchan_trace.om
+  859745129ef1ccfab393855eaa18571390483f6c04fb5dbbadfe3b5a5fc9bddb  tests/rmchan_ref.c
+  f6b6fed57798083d502431057958b465511f4e973748462fba042226407967c6  tests/complete_trace.om
+
+Fixture corrections recorded in this run
+  - dispatch: five late-failure cases now carry word counts covering their words; the C referee
+    refuses trailing words; blank lines are no longer counted as cases. Redundant prevalidation
+    checks were removed from dspprev (dspseq/sqrun refuse first), with their unkillable mutant.
+  - chan/rmchan: channel lifecycle is prepared (2) -> scheduled/submit-ready (1) -> disabled (2).
+    New control: rmbind refuses an already active channel (cap 29 rc=-5); new mutants for the
+    schedule ACK activation and the prepared-state bind check are killed.
+  - complete: the explicit window quarantine on drain timeout duplicated gmquar (gmretire quarantines
+    a published owned window), so its mutant was equivalent; the duplicate and that mutant are removed.
+
+Not established by any of the above
+  device identity, coherent DMA ownership, cache attributes and maintenance, dma_wmb/dma_rmb, interrupt
+  delivery, engine WFI/membar, GSP idle, firmware authentication, hardware boot/RPC and any Linux kernel
+  or Omega kernel execution. The compiler's DSB SY bracketing is process instruction ordering only.

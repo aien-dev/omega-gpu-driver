@@ -1,0 +1,280 @@
+fn tpage s ulong pos ulong off ulong n ulong to void
+for i ulong n
+v = mul add off i 37
+v = and add v s 255
+put arin add pos i uchar v
+end
+end
+fn tfill s ulong pos ulong to void
+n = get arslen s
+s = mul add s 1 19
+off = ulong 0
+for p ulong div n 4096
+tpage s pos off 4096
+pos = add pos 4096
+off = add off 4096
+end
+tpage s pos off rem n 4096
+end
+note Independent synthetic caller-owned fixture, never reads actual firmware or a device.
+global athdr uchar 512
+fn athput o ulong v ulong to void
+for i ulong 8
+put athdr add o i uchar and shr v mul i 8 255
+end
+end
+fn atsetup mode uchar to void
+put arbase 0 1048576
+put arcap 0 ARMAX
+put arused 0 0
+put arcfg 0 1
+put arcfg 1 40
+put arcfg 2 268435456
+put arcfg 3 8192
+put arcfg 4 7
+put arcfg 5 9
+put arcfg 6 45056
+put arcfg 7 2560
+put arcfg 8 0
+put arcfg 9 0
+put arslen 0 4097
+if eq mode 2
+put arslen 0 add mul ulong 512 4096 1
+end
+put arslen 1 257
+put arslen 2 196608
+put arslen 3 4103
+put arslen 4 48
+put arslen 5 384
+put arslen 6 384
+pos = ulong 0
+for s ulong 7
+put arsrc s pos
+tfill s pos
+pos = add pos get arslen s
+end
+for i ulong 936
+put siout i uchar and add mul i 13 129 255
+end
+if or or eq mode 1 eq mode 3 or eq mode 4 ge mode 30
+put arcfg 9 26
+put arreg 0 26
+put arreg 4 1
+put arreg 8 24
+put arreg 12 1
+put arreg 16 239
+put arreg 17 190
+put arreg 18 173
+put arreg 19 222
+put arreg 20 4
+put arreg 24 88
+end
+if or eq mode 3 eq mode 4
+put arreg 12 2
+put arreg 16 26
+put arreg 17 0
+put arreg 18 0
+put arreg 19 0
+put arreg 20 3
+put arcfg 9 29
+put arreg 0 29
+put arreg 26 255
+put arreg 27 128
+put arreg 28 0
+if eq mode 4
+put arreg 12 3
+end
+end
+if eq mode 10
+put arcfg 0 0
+end
+if eq mode 11
+put arbase 0 1048577
+end
+if eq mode 12
+put arcap 0 sub ARMAX 1
+put arbase 0 sub not ulong 0 4095
+end
+if eq mode 13
+put arcfg 1 0
+end
+if eq mode 14
+put arcfg 1 65
+end
+if eq mode 15
+put arcfg 2 0
+end
+if eq mode 16
+put arcfg 3 8193
+end
+if eq mode 17
+put arcfg 6 45055
+end
+if eq mode 18
+put arslen 0 0
+end
+if eq mode 19
+put arsrc 1 ARMAX
+end
+if eq mode 20
+put arslen 2 196607
+end
+if eq mode 21
+put arslen 4 47
+end
+if eq mode 22
+put arcap 0 4096
+end
+if eq mode 23
+put arcfg 1 20
+end
+if eq mode 24
+put arcfg 2 sub not ulong 0 4095
+end
+if eq mode 25
+put arused 0 4096
+end
+if eq mode 26
+put arcfg 8 1
+end
+if eq mode 27
+put arcfg 4 shl ulong 1 32
+end
+if eq mode 28
+put arcfg 9 65457
+end
+if eq mode 29
+put arslen 6 383
+end
+if eq mode 30
+put arreg 0 25
+end
+if eq mode 31
+put arreg 4 33
+end
+if eq mode 32
+put arreg 8 25
+end
+if eq mode 33
+put arreg 24 0
+end
+if eq mode 34
+put arreg 25 88
+end
+if eq mode 35
+put arreg 13 1
+end
+if eq mode 36
+put arreg 12 4
+end
+if eq mode 37
+put arreg 20 3
+end
+if eq mode 38
+put arreg 12 2
+put arreg 16 26
+put arreg 17 0
+put arreg 18 0
+put arreg 19 0
+put arreg 20 1
+end
+if eq mode 39
+put arcfg 1 20
+put arcfg 2 4096
+end
+if eq mode 40
+put arcfg 2 4097
+end
+end
+fn atqueue to bool
+c = get arcmd 0
+s = get arstat 0
+for i ulong 262144
+v = get arbuf add c i
+if ne v get rqcmd i
+ret false
+end
+v = get arbuf add s i
+if ne v get rqstat i
+ret false
+end
+end
+ret true
+end
+fn main to int
+b = new uchar 1 0
+n = read 0 b 0 1
+if ne n 1
+ret 2
+end
+m = get b 0
+atsetup m
+r = arboot 40 128
+if lt r 0
+ret 3
+end
+if ne get bstate 0 4
+ret 5
+end
+if ne get rqrx 0 0
+ret 5
+end
+if ne get rqseq 0 0
+ret 5
+end
+if not atqueue
+ret 5
+end
+rqpeer
+for i ulong 4096
+put rqtmp i 0
+end
+rqput32 2 40 1
+rqput32 2 48 RQVER
+rqput32 2 52 RQSIG
+rqput32 2 56 32
+rqput32 2 60 4097
+rqput32 2 32 rqsum 2 80
+for i ulong 4096
+put rqstat add 4096 i get rqtmp i
+end
+rqput32 1 16 1
+if ne bpoll 1
+ret 5
+end
+if ne get bstate 0 5
+ret 5
+end
+if ne get rqrx 0 1
+ret 5
+end
+if ne get rqseq 0 0
+ret 5
+end
+athput 0 get arused 0
+athput 8 get arcmd 0
+athput 16 get arstat 0
+athput 24 ulong get rqtx 0
+athput 32 get arclen 0
+athput 40 get artail 0
+for i ulong 17
+athput add 48 mul i 8 get aroff i
+athput add 184 mul i 8 get arsize i
+end
+for i ulong 4
+athput add 320 mul i 8 get arnp i
+end
+n = write 1 athdr 0 512
+if ne n 512
+ret 4
+end
+n = write 1 arbuf 0 get arused 0
+if ne n long get arused 0
+ret 4
+end
+n = write 1 arcot 0 1024
+if ne n 1024
+ret 4
+end
+ret 0
+end

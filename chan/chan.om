@@ -3,7 +3,7 @@ note PR #441 native/kernel/gpu/gpu_chan.c and gpu_chan.h (branch pr441 @ c5bb3a4
 note Prefix ch / CH. Needs chan/gmmu.om and chan/mem.om before it, and chan/sim.om (mode 0 ops).
 note
 note A channel is a slot 0..3 (CHSLOTS); its buffers are chan/mem.om slots. The CPU writes the ring,
-note USERD GPPut and the instance block through mmwin; the doorbell goes through mmregwr.
+note USERD GPPut and the instance block through mmrd/mmwr (array or owned mapping); doorbell mmregwr.
 note
 note Channel ops (C: a function-pointer table): chbindop / chdisop / chidlop. mmmode 0 calls the
 note simulator (chan/sim.om gsbind / gsdisable / gsidle). On GB10 the channel is allocated, scheduled
@@ -69,6 +69,7 @@ global chin ulong 4
 global chput uint 4
 global chret uint 4
 global chopen uchar 4
+global chepoch ulong 4
 global chrlo uint 2
 global chx ulong 8
 fn chtoken rl uint chid uint to uint
@@ -89,6 +90,10 @@ fn chmthd subc uint mthd uint count uint to uint
 ret or or or CHNINC shl count 16 shl subc 13 shr mthd 2
 end
 fn chbindop c ulong to long
+if eq get mmwkind 0 1
+note Hardware channel RPC is absent here. Refuse before publication; never walk unrelated mmwin.
+ret -95
+end
 if ne get mmmode 0 0
 trap 9
 end
@@ -107,6 +112,9 @@ end
 ret gsidle chid
 end
 fn chinit to void
+if and eq get mmwkind 0 1 not mmwmutable
+trap 9
+end
 for c ulong CHSLOTS
 put chopen c 0
 put chgp c GMNONE
@@ -132,7 +140,26 @@ put chud c GMNONE
 put chin c GMNONE
 ret CHENOMEM
 end
+note Separate backing preparation from RPC allocation/scheduling; state2 cannot submit.
 fn chcreate c ulong chid uint rl uint ent uint to long
+r = chprep c chid rl ent
+if ne r CHOK
+ret r
+end
+if ne chbindop c 0
+r = gmfree get chin c
+r = gmfree get chud c
+r = gmfree get chgp c
+put chopen c 0
+ret CHEBIND
+end
+put chopen c 1
+ret CHOK
+end
+fn chprep c ulong chid uint rl uint ent uint to long
+if or not mmwmutable ne get gmepoch 0 get mmwgen 0
+ret CHESTATE
+end
 if ge c CHSLOTS
 ret CHEINVAL
 end
@@ -143,6 +170,7 @@ if or or lt ent 2 gt ent 65536 ne and ent sub ent 1 0
 ret CHEINVAL
 end
 put chopen c 0
+put chepoch c get mmwgen 0
 put chput c 0
 put chret c 0
 put chgp c GMNONE
@@ -192,17 +220,14 @@ ret chnomem c
 end
 put chrl0 c get chrlo 0
 put chrl1 c get chrlo 1
-if ne chbindop c 0
-r = gmfree get chin c
-r = gmfree get chud c
-r = gmfree get chgp c
-ret CHEBIND
-end
-put chopen c 1
+put chopen c 2
 ret CHOK
 end
 fn chsubmit c ulong pb ulong off uint n uint to long
-if or ge c CHSLOTS eq get chopen c 0
+if or ge c CHSLOTS ne get chopen c 1
+ret CHESTATE
+end
+if ne get chepoch c get mmwgen 0
 ret CHESTATE
 end
 if not gmlive pb
@@ -240,6 +265,9 @@ fn chretire c ulong upto uint to void
 if ge c CHSLOTS
 ret
 end
+if ne get chepoch c get mmwgen 0
+ret
+end
 r = get chret c
 if le sub upto r sub get chput c r
 put chret c upto
@@ -249,15 +277,21 @@ fn chteardown c ulong budget uint nx ulong to long
 if or ge c CHSLOTS eq get chopen c 0
 ret CHESTATE
 end
+if ne get chepoch c get mmwgen 0
+ret CHESTATE
+end
 put chopen c 0
 chid = get chchid c
 d = chdisop chid
 idle = false
 for i uint budget
-if ne chidlop chid 0
+if and eq d 0 eq chidlop chid 1
 idle = true
 break
 end
+end
+if and not idle eq get mmwkind 0 1
+r = mmwquar get mmwgen 0
 end
 rc = CHOK
 for k ulong 3

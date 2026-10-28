@@ -1,0 +1,14 @@
+note Explicit HOST REPLAY binding for boot.om. Never link this as a hardware transport fallback.
+fn bcanrst to bool
+ret true
+end
+fn blost to void
+note Host arrays own no published DMA; boot.om itself latches its quarantine state.
+ret
+end
+fn bemit f ulong n ulong p ulong sync bool to long
+ret rqsend f n p sync
+end
+fn bpull to long
+ret rqrecv
+end

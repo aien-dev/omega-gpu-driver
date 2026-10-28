@@ -1,0 +1,286 @@
+note HOSTMODEL only: anonymous mapping, simulated GSP peer and memory semaphore.
+note Output observes queued request headers, RM states, and caller-visible errors.
+note No device, VFIO, DMA mapping, engine idle, cache coherency, or backing release is claimed.
+text rtfrag "step | state=| fn=| rc=|seq | st=|cap |req | cli=| par=| obj=| cls=| n=| en="
+global outbuf uchar 1
+global digs uchar 24
+global rtret long 1
+global rtpb ulong 1
+global rtsem ulong 1
+fn prch c uchar to void
+put outbuf 0 c
+r = write 1 outbuf 0 1
+end
+fn prstr k ulong to void
+w = ulong 0
+for i ulong len rtfrag
+c = get rtfrag i
+if eq c 124
+w = add w 1
+else
+if eq w k
+prch c
+end
+end
+end
+end
+fn prdec v long to void
+if lt v 0
+prch 45
+v = sub 0 v
+end
+if eq v 0
+prch 48
+ret
+end
+cnt = ulong 0
+x = ulong v
+while gt x 0 bound 24
+put digs cnt uchar add rem x 10 48
+cnt = add cnt 1
+x = div x 10
+end
+for i ulong cnt
+prch get digs sub sub cnt 1 i
+end
+end
+fn ck r long want long to void
+if ne r want
+exit 1
+end
+end
+fn prstep id long rc long to void
+prstr 0
+prdec id
+prstr 1
+prdec long get rmst 0
+prstr 2
+f = ulong 0
+if eq get bstate 0 10
+f = get bfunc 0
+end
+prdec long f
+prstr 3
+prdec rc
+prch 10
+end
+fn prseq id long rc long to void
+prstr 4
+prdec id
+prstr 3
+prdec rc
+prstr 5
+prdec long get bstate 0
+prch 10
+end
+fn prcap id long rc long to void
+prstr 6
+prdec id
+prstr 3
+prdec rc
+prch 10
+end
+fn prreq to void
+note Read request queue bytes, not mutable bhead or expected literals.
+wr = rqget32 0 16
+slot = rem add wr 62 63
+o = add 4096 mul slot 4096
+f = rqget32 0 add o 60
+prstr 7
+prdec long f
+prstr 8
+prdec long rqget32 0 add o 80
+if eq f 103
+prstr 9
+prdec long rqget32 0 add o 84
+prstr 10
+prdec long rqget32 0 add o 88
+prstr 11
+prdec long rqget32 0 add o 92
+prstr 12
+prdec long rqget32 0 add o 100
+end
+if eq f 76
+prstr 10
+prdec long rqget32 0 add o 84
+prstr 11
+prdec long rqget32 0 add o 88
+prstr 13
+prdec long get rqcmd add o 120
+ck long get rqcmd add o 121 0
+ck long get rqcmd add o 122 0
+end
+if eq f 10
+prstr 10
+prdec long rqget32 0 add o 88
+end
+prch 10
+end
+fn tf f ulong n ulong seq ulong to void
+for i ulong mul div add n 4175 4096 4096
+put rqtmp i 0
+end
+rqput32 2 36 ulong get rqrx 0
+rqput32 2 40 div add n 4175 4096
+rqput32 2 48 RQVER
+rqput32 2 52 RQSIG
+rqput32 2 56 add 32 n
+rqput32 2 60 f
+rqput32 2 72 seq
+for i ulong n
+put rqtmp add 80 i get rqpay i
+end
+rqput32 2 32 rqsum 2 mul div add n 87 8 8
+wr = rqget32 1 16
+e = div add n 4175 4096
+for i ulong mul e 4096
+o = rem add wr div i 4096 63
+o = add 4096 mul o 4096
+o = add o rem i 4096
+put rqstat o get rqtmp i
+end
+rqput32 1 16 rem add wr e 63
+end
+fn bootinit to void
+ck breset 0
+ck bsys 0
+ck breg 0 0
+ck bstart 40 128 0
+rqpeer
+rqclear 0
+tf 4097 0 0
+ck bpoll 1
+rqclear 792
+rqput32 4 0 1
+rqput32 4 4 2
+ck bguest 0
+tf 1 792 get bseq 0
+ck bpoll 1
+ck bstatic 0
+rqclear 128
+tf 65 128 get bseq 0
+ck bpoll 1
+end
+fn ackalloc to void
+prreq
+rqclear add 32 get bplen 0
+for i ulong 4
+rqput32 4 mul i 4 get bhead i
+end
+rqput32 4 20 get bplen 0
+tf 103 32 get bseq 0
+end
+fn ackctrl to void
+prreq
+rqclear add 40 get bplen 0
+for i ulong 3
+rqput32 4 mul i 4 get bhead i
+end
+rqput32 4 16 get bplen 0
+tf 76 add 40 get bplen 0 get bseq 0
+end
+fn ackfree to void
+prreq
+rqclear 16
+rqput32 4 0 get bhead 0
+rqput32 4 8 get bhead 1
+tf 10 16 get bseq 0
+end
+fn setupmem to void
+ck mmwalloc 2147483648 1048576 MMOK
+ck mmasinit get mmwb 0 64 MMOK
+ck gminit 4 add get mmwb 0 262144 128 8589934592 GMOK
+ck gmalloc 4096 1 0 GMOK
+put chin 0 get gmout 0
+ck gmalloc 512 1 GMHPOLL GMOK
+put chud 0 get gmout 0
+ck gmalloc 8192 1 GMGPURO GMOK
+put chgp 0 get gmout 0
+ck gmalloc 4096 1 GMHPOLL GMOK
+put rtsem 0 get gmout 0
+ck gmalloc 4096 1 0 GMOK
+put rtpb 0 get gmout 0
+put chent 0 1024
+put chchid 0 0
+put chepoch 0 get mmwgen 0
+note chprep state: backing prepared, not schedulable until the schedule ACK.
+put chopen 0 2
+note DMA state is injected HOSTMODEL capability input only, never a successful DMA ioctl.
+put mmwst 0 MMWDMA
+end
+fn main to int
+bootinit
+ck rminit RMOK
+ck cminit CMOK
+setupmem
+rmcfg 3254779905 3254779906 3254779907 3254779912 3254779913 3254779914
+rmcfgch 3254779915 0 1 42
+prcap 30 rmbind 4 get mmwgen 0
+prcap 31 rmbind 0 add get mmwgen 0 1
+note An already active (submit-ready) channel is not a prepared backing; RM bind refuses it.
+put chopen 0 1
+prcap 29 rmbind 0 get mmwgen 0
+put chopen 0 2
+prcap 32 rmbind 0 get mmwgen 0
+prcap 33 rmbind 0 get mmwgen 0
+ck cmbind 0 get rtsem 0 0 get mmwgen 0 CMOK
+prcap 34 cminit
+prcap 35 rminit
+r = rmstart 10
+ck r RMOK
+prstep 1 r
+rqclear 44
+rqput32 4 0 1
+rqput32 4 4 0
+tf 4098 44 0
+prseq 1 rmstep
+prseq 2 rmstep
+prseq 3 bseqdone get bgen 0 add get btoken 0 1 true
+prseq 4 bseqdone get bgen 0 get btoken 0 true
+for i ulong 7
+ackalloc
+r = rmstep
+prstep long add i 2 r
+end
+r = rmsched 10
+prstep 9 r
+ackctrl
+r = rmstep
+prstep 10 r
+ck rmpub get mmwgen 0 MMOK
+ck cmputpb get rtpb 0 0 0 get cmva 0 1 6
+prcap 36 rmsub 1 get rtpb 0 0 6
+prcap 37 rmsub 0 get rtpb 0 0 0
+put chopen 0 0
+prcap 38 rmsub 0 get rtpb 0 0 6
+put chopen 0 1
+prcap 39 rmsub 0 get rtpb 0 0 6
+note Reusing sequence one cannot publish a second untracked entry.
+prcap 40 rmsub 0 get rtpb 0 0 6
+ck long get chput 0 1
+ck long get cmput 0 1
+r = rmdis 10
+prstep 11 r
+prcap 41 rmsub 0 get rtpb 0 0 6
+ackctrl
+r = rmstep
+prstep 12 r
+prcap 42 rmfree 10
+note Explicit host peer writes the completion marker, not engine-idle evidence.
+mmwr32 get cmpa 0 1
+ck rmdrain 0 3 RMOK
+r = rmfree 10
+prstep 13 r
+for i ulong 7
+ackfree
+r = rmstep
+prstep long add i 14 r
+end
+prcap 43 rmsub 0 get rtpb 0 0 6
+prcap 44 rmfree 10
+prcap 45 rmlose get mmwgen 0
+prcap 46 rminit
+prcap 47 cminit
+ck long get mmwst 0 long MMWQUAR
+ret 0
+end

@@ -1,0 +1,373 @@
+note HOST ONLY: anonymous queue+BAR mappings, explicit link-time DMA oracle, no device opens.
+global qsem ulong 1
+global qpb ulong 1
+fn sqcorefn op ulong to long
+note Explicit host fixture refusal; core effects are not provided or synthesized.
+ret SQENOC
+end
+global qtbytes uchar 65536
+global qstage uchar 1
+fn qck ok bool to void
+if not ok
+r = write 2 qstage 0 1
+exit 1
+end
+end
+fn qsetup to void
+atsetup 0
+qck eq arboot 8 128 0
+qck eq mmwalloc get arbase 0 add get arused 0 1048576 MMOK
+g = get mmwgen 0
+qck eq arstage g MMOK
+put qstage 0 1
+note Reserve actual mapped page tables/buffers before global publication. Register side is explicitly mode0.
+put mmmode 0 0
+gsinit get arbase 0 get mmws 0
+put qstage 0 2
+p = add get arbase 0 get arused 0
+qck eq mmasinit p 64 MMOK
+put qstage 0 5
+qck eq gminit 4 add p 262144 128 8589934592 GMOK
+put qstage 0 6
+qck eq chprep 0 7 1 64 CHOK
+put qstage 0 7
+qck eq gmalloc 4096 1 GMHPOLL GMOK
+put qsem 0 get gmout 0
+put qstage 0 3
+qck eq gmalloc 4096 1 0 GMOK
+put qpb 0 get gmout 0
+qck eq mmwdmap g 17 MMOK
+qck eq mmwpublish g MMOK
+qck eq cmbind 0 get qsem 0 0 g CMOK
+put qstage 0 4
+h = mapnew -1 0 2097152 3 33
+qck gt h 0
+qck eq gpchip uint 447741952 1
+qck eq gpchip uint 0 -95
+qck eq qtattach g h 2097152 uint 0 -95
+qck eq qtattach g h GPNOTIF uint 447741952 -1
+qck eq qtattach g h 2097152 uint 447741952 0
+r = mapset h GPNOTIF 4 123
+qck eq r 0
+rqpeer
+r = mapwrite get mmwh 0 get qtstat 0 rqstat 0 32
+qck eq r 32
+r = mapset get mmwh 0 add get qtstat 0 32 4 rqget32 0 16
+qck eq r 0
+end
+fn qframe f ulong n ulong seq ulong res ulong priv ulong to void
+wr = rqget32 1 16
+tf f n seq res priv
+e = rqget32 2 40
+qfcop wr e
+end
+fn qfcop wr ulong e ulong to void
+for i ulong e
+slot = rem add wr i RQCOUNT
+o = mul add slot 1 RQSLOT
+r = mapwrite get mmwh 0 add get qtstat 0 o rqstat o RQSLOT
+qck eq r long RQSLOT
+end
+r = mapset get mmwh 0 add get qtstat 0 16 4 rqget32 1 16
+qck eq r 0
+end
+fn qsame wr ulong e ulong to void
+for i ulong e
+slot = rem add wr i RQCOUNT
+o = add get qtcmd 0 mul add slot 1 RQSLOT
+r = mapread get mmwh 0 o qtbytes mul i RQSLOT RQSLOT
+qck eq r long RQSLOT
+end
+for i ulong mul e RQSLOT
+qck eq get qtbytes i get rqtmp i
+end
+end
+fn qretain to void
+qck eq get mmwst 0 MMWQUAR
+qck eq mmwclose get qtepoch 0 MMEBUSY
+qck ne get mmwh 0 0
+qck eq get drunmaps 0 0
+qck eq get drdrops 0 0
+qck eq breset -10
+end
+fn qboot to void
+rqclear 0
+qframe 4097 0 0 0 0
+qck eq drvstep false 1
+qck eq get bstate 0 5
+rqclear 792
+rqput32 4 0 1
+rqput32 4 4 2
+qck eq bguest 0
+qframe 1 792 get bseq 0 0 0
+qck eq drvstep false 1
+qck eq get bstate 0 7
+qck eq bstatic 0
+qframe 65 128 get bseq 0 0 0
+qck eq drvstep false 1
+qck eq get bstate 0 9
+end
+fn qack to void
+f = get bfunc 0
+if eq f 103
+rqclear 32
+for i ulong 4
+rqput32 4 mul i 4 get bhead i
+end
+rqput32 4 20 get bplen 0
+qframe 103 32 get bseq 0 0 0
+ret
+end
+if eq f 76
+rqclear add 40 get bplen 0
+for i ulong 3
+rqput32 4 mul i 4 get bhead i
+end
+rqput32 4 16 get bplen 0
+qframe 76 add 40 get bplen 0 get bseq 0 0 0
+ret
+end
+qck eq f 10
+rqclear 16
+rqput32 4 0 get bhead 0
+rqput32 4 8 get bhead 1
+qframe 10 16 get bseq 0 0 0
+end
+fn main to int
+m = new uchar 1 0
+qck eq read 0 m 0 1 1
+mode = get m 0
+qsetup
+qck eq drvprep 123 2 3 4 5 0
+qck eq get gin 0 get arclen 0
+qck eq get gin 1 araddr 15
+qck eq get gin 2 123
+qck eq get gin 6 5
+for i ulong get arclen 0
+qck eq get gpkt i get arcot i
+end
+wr = rqget32 0 16
+seq = get rqseq 0
+tx = get rqtx 0
+if eq mode 100
+put gspmode 0 0
+siminit
+rqclear 52
+rqput32 4 0 3
+rqput32 4 4 2
+rqput32 4 40 SQDLY
+rqput32 4 44 5
+qframe 4098 52 0 0 0
+qck eq drvstep false 2
+qck eq get bstate 0 4
+qck eq get sqdly 0 1
+qck eq get sqdly 1 5
+qck eq get rqtx 0 tx
+ret 0
+end
+if eq mode 106
+qboot
+put qstage 0 20
+qck eq rminit RMOK
+rmcfg 101 102 103 104 105 106
+rmcfgch 107 7 1 0
+qck eq rmbind 0 get mmwgen 0 RMOK
+put qstage 0 21
+qck eq rmstart 8 RMOK
+for i ulong 7
+qack
+qck eq drvstep true 1
+end
+qck eq get rmst 0 RMSREADY
+put qstage 0 22
+qck eq rmsched 8 RMOK
+qack
+qck eq drvstep true 1
+qck eq get rmst 0 RMSACTV
+put qstage 0 23
+qck eq cmputpb get qpb 0 0 0 get cmva 0 1 6
+qck eq rmsub 0 get qpb 0 0 6 RMOK
+put qstage 0 24
+qck eq get chret 0 uint 0
+qck eq rmdis 8 RMOK
+qack
+qck eq drvstep true 1
+qck eq get rmst 0 RMSDRAIN
+put qstage 0 25
+qck ne rmsub 0 get qpb 0 0 6 RMOK
+note Explicit HOST PEER semaphore release, not a GPU completion claim.
+mmwr32 get cmpa 0 1
+qck eq rmdrain 0 2 RMOK
+put qstage 0 26
+qck eq get chret 0 uint 1
+qck eq rmfree 8 RMOK
+for i ulong 7
+qack
+qck eq drvstep true 1
+end
+qck eq get rmst 0 RMSDONE
+put qstage 0 27
+qck eq mmwclose get mmwgen 0 MMEBUSY
+qck eq get drunmaps 0 0
+ret 0
+end
+if eq mode 105
+qboot
+put qstage 0 30
+qck eq pasched 1 0 0 3
+put qstage 0 31
+qck eq brmctrl 123 456 PACMSCH 8 0
+put qstage 0 32
+rqclear 43
+rqput32 4 0 123
+rqput32 4 4 456
+rqput32 4 8 PACMSCH
+rqput32 4 16 3
+qframe 76 43 get bseq 0 0 0
+qck eq bpoll 1
+put qstage 0 33
+qck eq get bstate 0 9
+qck eq get bresult 0 0
+put qstage 0 34
+qck eq mapget get mmwh 0 add get qtcmd 0 32 4 4
+qck eq get mmwst 0 MMWPUB
+ret 0
+end
+ret qcase mode wr seq tx
+end
+fn qcase mode uchar wr ulong seq uint tx uint to int
+if or eq mode 97 eq mode 119
+if eq mode 119
+rqput32 0 16 62
+r = mapset get mmwh 0 add get qtcmd 0 16 4 62
+qck eq r 0
+r = mapset get mmwh 0 add get qtstat 0 32 4 20
+qck eq r 0
+wr = 62
+end
+n = ulong 17
+if eq mode 119
+n = 4020
+end
+rqclear n
+put rqpay 0 91
+qck eq qtsend 76 n n true 0
+qsame wr div add add 80 n 4095 4096
+qck eq mapget get mmwh 0 add get qtcmd 0 16 4 rqget32 0 16
+qck eq mapget get qtbar 0 GPNOTIF 4 0
+qck eq get rqseq 0 add seq uint 1
+qck eq get rqtx 0 add tx uint 1
+qck eq rqcommit get rqptok 0 -6
+ret 0
+end
+if eq mode 102
+r = mapset get mmwh 0 add get qtstat 0 32 4 rem add wr 1 RQCOUNT
+qck eq r 0
+qck eq qtsend 76 0 0 true -2
+qck eq rqget32 0 16 wr
+qck eq get rqseq 0 seq
+qck eq get rqtx 0 tx
+qck eq mapget get qtbar 0 GPNOTIF 4 123
+qck eq get mmwst 0 MMWPUB
+ret 0
+end
+if eq mode 112
+qck eq qtsend 76 0 0 true -6
+qck eq mapget get mmwh 0 add get qtcmd 0 16 4 rem add wr 1 RQCOUNT
+qck eq get rqseq 0 add seq uint 1
+qretain
+ret 0
+end
+if eq mode 103
+put bgen 0 add get bgen 0 1
+qck eq qtsend 76 0 0 true -6
+qck eq get rqseq 0 seq
+qck eq mapget get qtbar 0 GPNOTIF 4 123
+ret 0
+end
+if eq mode 98
+qck eq breset -10
+ret 0
+end
+if eq mode 120
+put bbudget 0 1
+qck eq bpoll 0
+qck eq bpoll -11
+qretain
+ret 0
+end
+if eq mode 118
+r = mapset get mmwh 0 add get qtstat 0 20 4 0
+qck eq r 0
+qck eq qtsend 76 0 0 true -1
+qck eq get rqseq 0 seq
+qretain
+ret 0
+end
+if eq mode 101
+rqclear 4
+qframe 72 4 0 0 0
+qck eq bpoll -13
+qck eq mapget get mmwh 0 add get qtcmd 0 32 4 1
+qretain
+ret 0
+end
+ret qrx mode
+end
+fn qrx mode uchar to int
+if eq mode 114
+rqput32 0 32 62
+rqput32 1 16 62
+r = mapset get mmwh 0 add get qtcmd 0 32 4 62
+qck eq r 0
+r = mapset get mmwh 0 add get qtstat 0 16 4 62
+qck eq r 0
+rqclear 4020
+put rqpay 4019 91
+qframe 76 4020 0 0 0
+qck eq bpull 1
+qck eq get rqout 4099 91
+qck eq mapget get mmwh 0 add get qtcmd 0 32 4 1
+ret 0
+end
+rqclear 1
+qframe 76 1 0 0 0
+if eq mode 99
+r = mapset get mmwh 0 add add get qtstat 0 RQSLOT 80 4 256
+qck eq r 0
+end
+if eq mode 109
+r = mapset get mmwh 0 add add get qtstat 0 RQSLOT 40 4 2
+qck eq r 0
+end
+if eq mode 104
+r = mapset get mmwh 0 add get qtstat 0 20 4 0
+qck eq r 0
+end
+qck eq qtsnap 0
+token = get qttok 0
+if eq mode 116
+qck eq qtaccept add token 1 -6
+qck eq mapget get mmwh 0 add get qtcmd 0 32 4 0
+end
+if eq mode 115
+r = mapset get mmwh 0 add get qtstat 0 16 4 2
+qck eq r 0
+end
+if or eq mode 116 eq mode 115
+qck eq qtaccept token 1
+qck eq rqget32 1 16 1
+qck eq mapget get mmwh 0 add get qtcmd 0 32 4 1
+qck eq qtaccept token -6
+ret 0
+end
+expected = long -1
+if eq mode 99
+expected = -3
+end
+qck eq qtaccept token expected
+qck eq mapget get mmwh 0 add get qtcmd 0 32 4 0
+qck eq get rqrx 0 uint 0
+qretain
+ret 0
+end

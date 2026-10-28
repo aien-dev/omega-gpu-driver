@@ -1,0 +1,336 @@
+note gsp/rpc.om: bounded non-CC GSP-RM queue codec, host replay ONLY. No DMA/MMIO or hardware readiness.
+note NVIDIA 580.173.02 message_queue_cpu.c:434-585,615-735; msgq.c SWAP_RX; rpc.c:11194-11228.
+note Reference aienux c5bb3a4b native/kernel/dev/gb10_gsp_boot.c:152-361.
+note rqcmd/rqstat are caller-owned replay images, NOT device mappings. No implicit hardware backend.
+note rqsend uses rqpay; logical n may exclude appended RM_ALLOC params, physical p includes them.
+note rqrecv captures full declared slots, validates actual alignment padding (not manufactured zeros).
+note Status: 0 empty/success; 1 received; -1 shape/length; -2 full; -3 checksum; -4 sequence;
+note -5 unsupported version/signature; -6 quarantined. Refusals never advance pointers or counters.
+const RQQSZ ulong 262144
+const RQSLOT ulong 4096
+const RQCOUNT ulong 63
+const RQMAX ulong 65536
+const RQVER ulong 50331648
+const RQSIG ulong 1129337430
+const RQU32 ulong 4294967295
+global rqcmd uchar 262144
+global rqstat uchar 262144
+global rqpay uchar 65536
+global rqout uchar 65536
+global rqtmp uchar 65536
+note counters: tx element, rx element, synchronous RPC; increment only after publication/acceptance.
+global rqtx uint 1
+global rqrx uint 1
+global rqseq uint 1
+global rqsent uint 1
+global rqlen ulong 1
+global rqslots ulong 1
+global rqfun ulong 1
+global rqres ulong 1
+global rqpriv ulong 1
+global rqreply ulong 1
+global rqdead uchar 1
+global rqlink uchar 1
+note Preparation is private; single-use token commits sequences only after the chosen publisher succeeds.
+global rqptok ulong 1
+global rqppend uchar 1
+global rqpwr ulong 1
+global rqpcnt ulong 1
+global rqpseq uint 1
+global rqptx uint 1
+global rqpsync uchar 1
+note Array selectors avoid passing globals (not supported by pinned compiler): 0 cmd,1 stat,2 tmp,3 out,4 pay.
+fn rqbyte a ulong o ulong to uchar
+if eq a 0
+ret get rqcmd o
+end
+if eq a 1
+ret get rqstat o
+end
+if eq a 2
+ret get rqtmp o
+end
+if eq a 3
+ret get rqout o
+end
+ret get rqpay o
+end
+fn rqput a ulong o ulong v uchar to void
+if eq a 0
+put rqcmd o v
+ret
+end
+if eq a 1
+put rqstat o v
+ret
+end
+if eq a 2
+put rqtmp o v
+ret
+end
+if eq a 3
+put rqout o v
+ret
+end
+put rqpay o v
+end
+fn rqget32 a ulong o ulong to ulong
+v = ulong 0
+for i ulong 4
+v = or v shl ulong rqbyte a add o i mul i 8
+end
+ret v
+end
+fn rqput32 a ulong o ulong v ulong to void
+for i ulong 4
+rqput a add o i uchar and shr v mul i 8 255
+end
+end
+fn rqsum a ulong n ulong to ulong
+v = ulong 0
+for i ulong n
+v = xor v shl ulong rqbyte a i mul rem i 4 8
+end
+ret v
+end
+fn rqshape a ulong to bool
+if or ne rqget32 a 0 0 ne rqget32 a 4 RQQSZ
+ret false
+end
+if or ne rqget32 a 8 RQSLOT ne rqget32 a 12 RQCOUNT
+ret false
+end
+if or ne rqget32 a 20 1 ne rqget32 a 24 32
+ret false
+end
+ret eq rqget32 a 28 RQSLOT
+end
+fn rqinit to void
+for i ulong RQQSZ
+put rqcmd i 0
+put rqstat i 0
+end
+rqput32 0 4 RQQSZ
+rqput32 0 8 RQSLOT
+rqput32 0 12 RQCOUNT
+rqput32 0 20 1
+rqput32 0 24 32
+rqput32 0 28 RQSLOT
+put rqtx 0 0
+put rqrx 0 0
+put rqseq 0 0
+put rqsent 0 0
+put rqlen 0 0
+put rqslots 0 0
+put rqdead 0 0
+put rqlink 0 0
+put rqppend 0 0
+end
+note Replay peer queue creation is explicit input, never inferred from a boot command.
+fn rqpeer to void
+for i ulong 32
+put rqstat i get rqcmd i
+end
+rqput32 1 16 0
+put rqlink 0 1
+end
+fn rqclear n ulong to void
+if gt n RQMAX
+trap 3
+end
+for i ulong n
+put rqpay i 0
+end
+end
+fn rqframe f ulong n ulong p ulong seq uint e ulong to void
+for i ulong mul e RQSLOT
+put rqtmp i 0
+end
+rqput32 2 36 ulong get rqtx 0
+rqput32 2 40 e
+rqput32 2 48 RQVER
+rqput32 2 52 RQSIG
+rqput32 2 56 add 32 n
+rqput32 2 60 f
+rqput32 2 64 RQU32
+rqput32 2 68 RQU32
+rqput32 2 72 ulong seq
+for i ulong p
+put rqtmp add 80 i get rqpay i
+end
+note All padding was zeroed above; supported RM_ALLOC fixed32 ends exactly on alignment.
+rqput32 2 32 rqsum 2 mul div add add 80 n 7 8 8
+end
+fn rqcopy wr ulong e ulong to void
+for i ulong mul e RQSLOT
+o = rem add wr div i RQSLOT RQCOUNT
+o = add RQSLOT mul o RQSLOT
+o = add o rem i RQSLOT
+put rqcmd o get rqtmp i
+end
+end
+fn rqprep f ulong n ulong p ulong sync bool to long
+if ne get rqdead 0 0
+ret -6
+end
+if ne get rqppend 0 0
+ret -6
+end
+if eq add get rqptok 0 1 0
+ret -6
+end
+if or gt f RQU32 or gt n 65456 lt p n
+ret -1
+end
+note The sole supported unchecked physical tail is vendor RM_ALLOC's aligned fixed32 body.
+if and gt p n not and eq f 103 eq n 32
+ret -1
+end
+e = div add add 80 n 4095 RQSLOT
+if or gt p sub mul e RQSLOT 80 gt p 65456
+ret -1
+end
+if not rqshape 0
+ret -1
+end
+wr = rqget32 0 16
+rd = rqget32 1 32
+if or ge wr RQCOUNT ge rd RQCOUNT
+ret -1
+end
+if lt rem sub add rd RQCOUNT add wr 1 RQCOUNT e
+ret -2
+end
+seq = uint 0
+if sync
+seq = get rqseq 0
+end
+rqframe f n p seq e
+put rqptok 0 add get rqptok 0 1
+put rqppend 0 1
+put rqpwr 0 wr
+put rqpcnt 0 e
+put rqpseq 0 seq
+put rqptx 0 get rqtx 0
+put rqpsync 0 0
+if sync
+put rqpsync 0 1
+end
+ret 0
+end
+fn rqcommit token ulong to long
+if or ne get rqppend 0 1 ne token get rqptok 0
+ret -6
+end
+if or ne get rqtx 0 get rqptx 0 ne rqget32 0 16 get rqpwr 0
+ret -6
+end
+if and ne get rqpsync 0 0 ne get rqseq 0 get rqpseq 0
+ret -6
+end
+wr = get rqpwr 0
+e = get rqpcnt 0
+seq = get rqpseq 0
+rqput32 0 16 rem add wr e RQCOUNT
+put rqsent 0 seq
+put rqtx 0 add get rqtx 0 uint 1
+if ne get rqpsync 0 0
+put rqseq 0 add seq uint 1
+end
+put rqppend 0 0
+ret 0
+end
+fn rqsend f ulong n ulong p ulong sync bool to long
+r = rqprep f n p sync
+if ne r 0
+ret r
+end
+rqcopy get rqpwr 0 get rqpcnt 0
+ret rqcommit get rqptok 0
+end
+fn rqcapt rd ulong e ulong to void
+for i ulong mul e RQSLOT
+p = rem add rd div i RQSLOT RQCOUNT
+p = add RQSLOT mul p RQSLOT
+p = add p rem i RQSLOT
+put rqtmp i get rqstat p
+end
+end
+fn rqvalid m ulong to long
+aligned = mul div add m 7 8 8
+if ne rqsum 2 aligned 0
+ret -3
+end
+if ne rqget32 2 36 ulong get rqrx 0
+ret -4
+end
+if or ne rqget32 2 48 RQVER ne rqget32 2 52 RQSIG
+ret -5
+end
+note Strict single-client non-CC profile: no authentication metadata or routing union.
+for i ulong 32
+if ne get rqtmp i 0
+ret -5
+end
+end
+if or ne rqget32 2 44 0 ne rqget32 2 76 0
+ret -5
+end
+ret 0
+end
+fn rqaccept n ulong e ulong rd ulong to void
+for i ulong mul e RQSLOT
+put rqout i get rqtmp i
+end
+put rqlen 0 sub n 32
+put rqslots 0 mul e RQSLOT
+put rqfun 0 rqget32 3 60
+put rqres 0 rqget32 3 64
+put rqpriv 0 rqget32 3 68
+put rqreply 0 rqget32 3 72
+rqput32 0 32 rem add rd e RQCOUNT
+put rqrx 0 add get rqrx 0 uint 1
+end
+fn rqrecv to long
+if ne get rqdead 0 0
+ret -6
+end
+if not rqshape 0
+ret -1
+end
+if not rqshape 1
+if eq get rqlink 0 0
+ret 0
+end
+ret -1
+end
+put rqlink 0 1
+wr = rqget32 1 16
+rd = rqget32 0 32
+if or ge wr RQCOUNT ge rd RQCOUNT
+ret -1
+end
+avail = rem sub add wr RQCOUNT rd RQCOUNT
+if eq avail 0
+ret 0
+end
+o = add RQSLOT mul rd RQSLOT
+e = rqget32 1 add o 40
+n = rqget32 1 add o 56
+if or or eq e 0 gt e 16 gt e avail
+ret -1
+end
+if or lt n 32 gt n 65488
+ret -1
+end
+if ne e div add add 48 n 4095 RQSLOT
+ret -1
+end
+rqcapt rd e
+r = rqvalid add 48 n
+if ne r 0
+ret r
+end
+rqaccept n e rd
+ret 1
+end

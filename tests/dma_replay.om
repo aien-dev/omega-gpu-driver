@@ -1,0 +1,18 @@
+note TEST ONLY link-time replacement for chan/dma.om; never a production fallback.
+note Real anonymous mapnew/mapget/mapset/mapdrop remain active. No device fd is opened or used.
+note Reject tuple/order mismatches so replay cannot silently bless a missing lifecycle call.
+global mmduout ulong 1
+global drmaps ulong 1
+global drunmaps ulong 1
+global drdrops ulong 1
+global drlive ulong 1
+global drmrc long 1
+global drurc long 1
+global drdrc long 1
+global drusize ulong 1
+fn mmdmaop op ulong fd int h long iova ulong size ulong to long
+ret drdma op fd h iova size
+end
+fn mmdrop h long to long
+ret drdrop h
+end

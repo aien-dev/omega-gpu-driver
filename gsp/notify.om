@@ -1,0 +1,6 @@
+note Linux-process mapped MMIO access, not a kernel writel binding or permission to activate hardware.
+note NVIDIA580.173.02 kernel_gsp.c:411-425 -> kgspSetCmdQueueHead_TU102:343-355.
+note PGSP_QUEUE_HEAD(0) is written with zero; checked mapset uses one32-bit store, DSB SY both sides.
+fn qtbell h long to long
+ret mapset h GPNOTIF 4 0
+end
