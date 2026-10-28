@@ -1,0 +1,83 @@
+note GB20B register-model extension. Pure simulator, not device evidence.
+note s2sc: secure-delay,response-delay,missing-response,bad-header,error,bad-pointer,short-response.
+global s2sc ulong 7
+global s2ss ulong 8
+fn s2simrd off ulong to ulong
+put s2ss 7 add get s2ss 7 1
+if eq off S2SCR
+if eq get s2sc 0 0
+ret 255
+end
+put s2sc 0 sub get s2sc 0 1
+ret 0
+end
+if eq off S2MH
+if eq get s2ss 0 1
+v = srmb0
+if and eq v 0 eq get s2sc 2 0
+if eq get s2sc 1 0
+put s2ss 1 1
+else
+put s2sc 1 sub get s2sc 1 1
+end
+end
+end
+ret 0
+end
+if eq off S2MT
+if eq get s2ss 1 0
+ret 0
+end
+if ne get s2sc 6 0
+ret 12
+end
+ret 16
+end
+if and eq off S2EMC eq get s2ss 2 1
+ret mul add get s2ss 3 get s2sc 5 4
+end
+if and eq off S2EMD eq get s2ss 2 1
+i = get s2ss 3
+put s2ss 3 add i 1
+if eq i 0
+ret 3221225472
+end
+if eq i 1
+ret add 353427070 get s2sc 3
+end
+if eq i 2
+ret 7
+end
+if eq i 3
+ret 20
+end
+if eq i 4
+ret get s2sc 4
+end
+ret 0
+end
+ret simrd off
+end
+fn s2simwr off ulong v ulong to void
+put s2ss 7 add get s2ss 7 1
+if eq off S2MH
+if and eq v 0 eq get s2ss 5 1
+put s2ss 6 1
+end
+ret
+end
+if eq off S2MT
+put s2ss 5 1
+put s2ss 1 0
+ret
+end
+if and eq off S2EMC eq v S2AINCR
+put s2ss 2 1
+put s2ss 3 0
+ret
+end
+simwr off v
+if eq off S2QH
+put s2ss 0 1
+end
+end

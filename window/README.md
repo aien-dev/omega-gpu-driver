@@ -56,12 +56,13 @@ Each driver step (W3 ident, W4, W5, W6) runs only if `build/ogd modes` lists it.
 `NOT_RUN: build/ogd has no '<mode>' mode` and the window goes straight to W7 and R. All logs go to
 `~/handoffs/OwnDriver/window/d2-<UTC>-{pre,run,restore,boot}.log`.
 
-**Current state (2026-10-27): `build/ogd` does not exist, so W4 and W5 are NOT_RUN and policy-blocked.** On
-2026-10-27 the .om port of aienux `gb10_gsp_boot.c` (boot arena, COT packet, message queue, RM RPC) was stopped by
-a model-policy refusal. Per the lane rule it was not retried. It needs a human-written port; that is Drake's
-item. A D2 window today therefore exercises W2, W3 (`build/w0`), W7 and R. That still settles DESIGN §7
-UNKNOWN 1 (BOOT_42 naming) and proves the vfio-pci bind/release and the nvidia.ko restore after the FLR and SBR.
-`d2-pre.sh --go D3` refuses without `build/ogd`.
+**Current candidate: `build/ogd` does not exist, so W4 and W5 are NOT_RUN.**
+The bounded arena/RPC and separate GB20B SEC2 units are implemented and host-exercised,
+but not composed into a production launcher. The native Aienux effect seam is also absent.
+See [GB20B.md](../GB20B.md) for the exact source pins and the narrower W0 identity
+authorization request. That request requires a frozen tree with no `build/ogd`,
+explicit 18091 stop/restore plus FLR/SBR/reboot approval, and does not authorize D2
+firmware loading. `d2-pre.sh --go D3` refuses without `build/ogd`.
 
 ## Recovery when R fails twice
 

@@ -244,7 +244,7 @@ for i ulong 1024
 put gpkt i uchar and add mul i 13 5 255
 end
 if hdrok
-tput32 0 3221225472
+tput32 0 1
 tput32 4 336649854
 tput32 8 56360961
 end

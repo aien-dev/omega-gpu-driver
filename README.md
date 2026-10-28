@@ -14,6 +14,13 @@ driver needs. The pin moves to omega-mv main after those PRs are reviewed and me
 `DESIGN.md` records the proposed isolation/submit/cache model and the implemented, host-exercised owned
 DMA-window lifecycle. Hardware execution and the Linux-kernel replacement remain NOT_RUN.
 
+The 2026-10-28 candidate corrects the common-mode GB10B MCTP-header oracle defect
+and adds a separate source-selected GB20B COTv2 arena and SEC2 response path.
+See [GB20B.md](GB20B.md) for exact vendor/reference pins, mismatch refusals,
+host-only scope, composed-launcher/native-effect gaps and the **unexecuted**
+minimal W0 authorization procedure. `fwprep` remains GB10B-only; `gpchip` does
+not admit GB20B to the existing GB10B transport. No physical boot/RPC/compute ran.
+
 ## W0: bind, read identity, release
 
 `w0 BDF GROUP [HEXOFF]` opens one PCI function that the operator has already bound to `vfio-pci`, reads
@@ -85,6 +92,7 @@ reference byte for byte, and each mutant script changes one line at a time and r
 | `chan/params.om` (RM alloc/control records for GSP-RM, NVIDIA 580.173.02 layouts) | NVIDIA headers | `tests/params_diff.sh` | `tests/mutants-chan.sh` |
 | `gsp/rpc.om`, `gsp/boot.om` (SWAP_RX transport frames, boot handshake, correlated RM transactions and quarantine; replay only) | `dev/gb10_gsp_boot.c` and pinned vendor protocol | `tests/rpc_diff.sh` | `tests/mutants-rpc.sh` |
 | `gsp/arena.om`, `gsp/connect.om` (bounded WPR/libos/log/radix/FMC/COT composition and preboot queue attachment) | `dev/gb10_gsp_boot.c` | `tests/arena_diff.sh` | `tests/mutants-arena.sh` |
+| `gsp/sec2.om`, `gsp/sec2sim.om`, profile-2 `gsp/arena.om` (GB20B secure-boot/COTv2/MSGQ cold-production candidate) | NVIDIA 580.173.02 SEC2 GB20B HAL | `tests/sec2_host.sh` | `tests/mutants-sec2.sh` |
 | `gsp/profile.om`, `gsp/transport.om`, `gsp/notify.om`, `gsp/service.om` (checked mapped queue mechanism and caller pump; not production admission) | pinned vendor SWAP_RX/notification plus explicit host peer | `tests/transport_host.sh` | compiling transport/notification/service mutants plus generated-fence checker negative control |
 | `gsp/dispatch.om` (whole-stream prevalidation and explicit host sequencer execution; hardware refusal) | pinned vendor sequencer plus aienux sequencer | `tests/dispatch_diff.sh` | `tests/dispatch_mutants.sh` |
 | `chan/complete.om`, `chan/rmchan.om` (semaphore progress and async RM lifecycle; no global idle proof) | pinned NVIDIA headers and independent C referee | `tests/complete_diff.sh`, `tests/rmchan_diff.sh` | `tests/mutants-complete.sh`, `tests/mutants-rmchan.sh` |

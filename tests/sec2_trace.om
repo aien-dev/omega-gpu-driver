@@ -1,0 +1,120 @@
+fn main to int
+b = new uchar 1 0
+if ne read 0 b 0 1 1
+ret 99
+end
+m = ulong get b 0
+atsetup 0
+put arcfg 0 2
+for i ulong 3
+put arpkg i 2
+end
+if and ge m 11 le m 13
+put arpkg sub m 11 1
+end
+r = arbuild
+if and ge m 11 le m 13
+if ne r -1
+ret 31
+end
+ret 0
+end
+if ne r 0
+ret 32
+end
+if or ne get arcot 3 192 ne get arcot 8 2
+ret 33
+end
+for i ulong 24
+if ne get arcot add 20 i 0
+ret 34
+end
+end
+for i ulong 1024
+put gpkt i get arcot i
+end
+put gin 0 get arclen 0
+put gin 1 araddr 15
+put gin 2 1
+for i ulong 4
+put gin add i 3 3
+end
+for i ulong 7
+put s2cfg i 1
+put s2sc i 0
+end
+put s2cfg 0 2
+put s2cfg 1 2
+put s2cfg 2 3
+put s2cfg 3 3
+put sprof 0 2
+put scfg 8 get gin 1
+siminit
+chip = uint 464519168
+expected = long 0
+if eq m 1
+put s2cfg 1 1
+expected = -1
+end
+if eq m 2
+chip = uint 447741952
+expected = -1
+end
+if eq m 3
+put s2sc 0 8
+expected = -10
+end
+if eq m 4
+put s2sc 2 1
+expected = -11
+end
+if eq m 5
+put s2sc 3 1
+expected = -12
+end
+if eq m 6
+put s2sc 4 1
+expected = -13
+end
+if eq m 7
+put s2sc 5 1
+expected = -12
+end
+if eq m 8
+put s2sc 6 1
+expected = -12
+end
+if eq m 9
+put gpkt 0 1
+put gpkt 3 0
+expected = -1
+end
+if eq m 10
+put gpkt 8 1
+expected = -1
+end
+if eq m 14
+put s2sc 0 3
+put s2sc 1 3
+end
+r = s2boot chip
+if ne r expected
+ret 40
+end
+if eq r 0
+if or ne get s2ss 6 1 ne get ss SVIOL 0
+ret 41
+end
+end
+if or or eq m 1 eq m 2 or eq m 9 eq m 10
+if ne get s2ss 7 0
+ret 42
+end
+end
+if and ge m 5 le m 7
+if ne get s2ss 6 1
+ret 43
+end
+end
+ret 0
+end

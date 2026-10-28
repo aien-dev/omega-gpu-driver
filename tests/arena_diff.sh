@@ -7,7 +7,9 @@ AIENUX=${AIENUX:?set AIENUX to pinned reference checkout}
 ARENA_OM=${ARENA_OM:-$R/gsp/arena.om}
 actual=$(sha256sum "$OMC"); actual=${actual%% *}
 [ "$actual" = bcfa582892afca8f65e551fe56867d918d86e84540c7381be8fa9ef18d0cf0f6 ] || { echo 'arena_diff: INVALID compiler pin'; exit 2; }
-[ "$(git -C "$AIENUX" rev-parse HEAD)" = c5bb3a4b9898257658aba0b7178a3c73a0371c27 ] || { echo 'arena_diff: INVALID oracle pin'; exit 2; }
+# Deliberate oracle refresh: aienux #463 corrects GB10B MCTP to the vendor HAL constant 1.
+# c5bb3a4b shared the old SOM|EOM defect with Omega and could not detect it.
+[ "$(git -C "$AIENUX" rev-parse HEAD)" = a108b1144a064aa7b824374a622d627c6ba91fd1 ] || { echo 'arena_diff: INVALID oracle pin'; exit 2; }
 git -C "$AIENUX" diff --quiet HEAD -- native/kernel/dev/gb10_gsp_boot.c native/kernel/dev/gb10_gsp_boot.h || { echo 'arena_diff: INVALID modified oracle'; exit 2; }
 t=$(mktemp -d /tmp/arena-parity.XXXXXX)
 trap 'rm -rf "$t"' EXIT HUP INT TERM

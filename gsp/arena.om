@@ -1,4 +1,4 @@
-note Host-only physical image composer, never DMA/MMIO. Oracle c5bb3a4b gb10_gsp_boot.c:367-553.
+note Host-only physical image composer, never DMA/MMIO. Oracle a108b114 gb10_gsp_boot.c:367-553.
 note Profile 1 means explicit UNVERIFIED GB10B 580.173.02 layout, NOT detected hardware identity.
 note Vendor 20e4e6e kernel_sec2_gb10b.c:507-508: gspFmcSysmemOffset = memdescGetPhysAddr; frtsSysmemSize = pGspImageSize.
 note WolframLanguageEvaluator FromDigits[dc3aae21371a60b3,16] -> 15869187694674993331; FromDigits[1410de7e,16] -> 336649854.
@@ -19,6 +19,9 @@ global arreg uchar 65456
 global arsrc ulong 7
 global arslen ulong 7
 global arcfg ulong 10
+note arpkg: signature-family, boot-archive, FMC-archive source profiles; 2 means gb20y/GB20B.
+note These are caller assertions, not signature authentication or hardware admission.
+global arpkg ulong 3
 global arbase ulong 1
 global arcap ulong 1
 global arused ulong 1
@@ -275,12 +278,19 @@ fn arcotmk to void
 for i ulong 1024
 put arcot i 0
 end
+if eq get arcfg 0 2
 arcput 0 shl ulong 3 30 4
-arcput 4 336649854 4
+arcput 8 2 2
+else
+arcput 0 1 4
 arcput 8 1 2
+end
+arcput 4 336649854 4
 arcput 10 860 2
 arcput 12 araddr 14 8
+if eq get arcfg 0 1
 arcput 28 get arslen 3 4
+end
 for i ulong 48
 put arcot add 44 i get arin add get arsrc 4 i
 end
@@ -317,7 +327,10 @@ end
 fn arbuild to long
 put arclen 0 0
 put artail 0 0
-if or ne get arcfg 0 1 or eq get arcfg 1 0 gt get arcfg 1 64
+if or lt get arcfg 0 1 gt get arcfg 0 2
+ret -1
+end
+if or eq get arcfg 1 0 gt get arcfg 1 64
 ret -1
 end
 if or ne get arused 0 0 gt get arcap 0 ARMAX
@@ -341,8 +354,22 @@ end
 if or gt get arcfg 4 4294967295 gt get arcfg 5 4294967295
 ret -1
 end
+if eq get arcfg 0 1
 if or ne get arcfg 6 45056 or ne get arcfg 7 2560 ne get arcfg 8 0
 ret -1
+end
+end
+if eq get arcfg 0 2
+for i ulong 3
+if ne get arpkg i 2
+ret -1
+end
+end
+for i ulong 3
+if ge get arcfg add i 6 get arslen 2
+ret -1
+end
+end
 end
 for i ulong 7
 if or eq get arslen i 0 gt get arsrc i ARMAX
@@ -352,7 +379,7 @@ if gt get arslen i sub ARMAX get arsrc i
 ret -2
 end
 end
-if or ne get arslen 2 196608 ne get arslen 4 48
+if or and eq get arcfg 0 1 ne get arslen 2 196608 ne get arslen 4 48
 ret -2
 end
 if or ne get arslen 5 384 ne get arslen 6 384
