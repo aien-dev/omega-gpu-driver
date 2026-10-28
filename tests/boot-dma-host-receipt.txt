@@ -1,0 +1,28 @@
+Composed GSP arena + owned DMA host receipt. Hardware and kernel execution NOT_RUN.
+Source contains c69470f5fac6fe603a45b2c4af0c79eea3409ec6 and1c7e6f0aacce5550ebb5951f8e6727357c16b5b1 DMA changes, cherry-picked preserving boot work.
+Compiler omega-mv397e67040fb74853c6814097fe02ae4e1ebd6f66, omc SHA256 bcfa582892afca8f65e551fe56867d918d86e84540c7381be8fa9ef18d0cf0f6.
+Platform Linux7.0.0-1019-nvidia aarch64 GNU/Linux.
+Commands with exact pinned OMC:
+OMC=$OMC sh tests/boot_dma.sh
+OMC=$OMC AIENUX=$AIENUX sh tests/dma_host.sh
+Both exited0.
+
+Observed:
+boot_dma: PASS exact owned staging, generations, publication refusal and timeout quarantine; hardware NOT_RUN
+Composed source SHA256 f8f8e3372e2cd6704b582469aed9f6f36baf73d725a6f195227d7495c6234eee
+Omega executable SHA256 3631c2bb44e69b7650c87b96728d3206429c23d7015ad9f90a9481805d6191a5
+boot_dma: PASS both behavior mutants detected; hardware NOT_RUN
+
+The link-time DMA oracle is explicitly tests/dma_replay.om plus checked tuple/order helpers from tests/dma_check.om. Real shared-anonymous mapnew/mapwrite/mapread/mapdrop semantics remain active. No device fd is opened, no DMA ioctl executes, and no hardware publication is inferred. Complete arbuf bytes equal the owned CPU mapping. Stale epoch, different IOVA window and postpublication staging refuse; pending timeout plus explicit arlose quarantines backing; unmap/drop remain uncalled and the map remains retained. Mutant omitting staging copy and mutant omitting quarantine both compiled and returned1 on behavior checks, not unexpected traps.
+
+dma_host: 23 replay/boundary cases and real invalid-fd retry/drop PASS
+dma_host: 11 compiled ownership/order/range/error mutants killed; hardware NOT_RUN
+DMA source SHA256s:
+chan/dma.om 87134205838435ec050646d30c99966b4381ea5821a0460ac30938b4911a8caf
+chan/gmmu.om 0c2033b69241a9aff2e067d0a61597fcff63292473c9627f9c33bf6e308526bf
+chan/mem.om 9adcf31f5b50fb7869d705908b6efd4a6da7ef67073c7e4cc24fd796e76b7a44
+chan/chan.om 900a40639724827d5afa17eb762663120c31a4410cb79040345b9706f682a127
+DMA replay executable SHA256 06f290ccc82f33cfa2ae14b8a0604ba722988b93e6ff7299259b8779cc7a9575
+Production invalid-fd executable SHA256 e2dfe13d77b4ae92b91b2ae6751eb1f107420754547b4da5fddf56058697ec60
+
+No release/acquire live queue publisher, completion detector, real sequencer dispatch, kernel transport, or authorization path is installed. CPU staging is not firmware execution. Published/quarantined backing is never reclaimed without a future documented idle proof.

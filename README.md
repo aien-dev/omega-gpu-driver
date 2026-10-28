@@ -129,6 +129,14 @@ the COT packet and `artail` its EMEM tail. Outputs are invalid after any nonzero
 input is canonical bounded PACKED_REGISTRY_TABLE bytes, not a foreign runtime. `arboot` connects this
 image's preboot queue counters directly to the boot handshake without reconstructing the queue.
 
+`gsp/owned.om` connects construction to the owned backing: `arstage(epoch)` copies exact arena bytes
+through the checked map handle only for the matching IOVA window, boot generation and unpublished
+OWN/DMA lifecycle. It never publishes or notifies hardware. `arlose(epoch)` connects a quarantined
+boot replay to retention of the matching already-published backing; it cannot unmap or reclaim it.
+The final composed host gate `sh tests/boot_dma.sh` uses an explicit link-time DMA oracle, real
+anonymous mappings and exact whole-arena comparison. Staging and quarantine mutants are both
+detected. Its receipt is `tests/boot-dma-host-receipt.txt`; this is not a device endpoint or fence.
+
 The host receipt is `tests/gsp-host-receipt.txt`: exact sender frames and boot state/refusal controls;
 five complete arena fixtures (including multi-level radix and DWORD/binary/string registry); 31
 invalid arena fixtures; 19 RPC and 12 arena mutants. Build/setup failures and unexpected runtime
@@ -183,8 +191,8 @@ Hardware is **NOT_RUN**. Actual device identity/profile selection, ownership-saf
 release/acquire publication and coherency, queue notification, real sequencer execution, channel
 binding/scheduling, completion-semaphore progress, fault handling and documented drain/recovery remain
 necessary before hardware use. Encoding a physical address does not create a mapping or prove that
-firmware read it. The separate DMA lifecycle backend must be connected through owned handles, never
-by treating these replay globals as mapped buffers.
+firmware read it. The owned CPU staging connection exists, but real DMA queue publication/receive
+still must use owned handles and explicit epochs, never these replay arrays as a live transport.
 
 The current compiler profile is a Linux-process ELF/VFIO profile, not Linux kernel code. A future
 Linux-hosted `.om` user-space driver could replace NVIDIA modules while retaining Linux VFIO/IOMMU

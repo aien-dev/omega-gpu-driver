@@ -1,0 +1,43 @@
+note HOST ONLY: explicit link-time DMA oracle plus real checked anonymous mapping. No device fd.
+global ascheck uchar 16777216
+fn asbytes to void
+n = get arused 0
+r = mapread get mmwh 0 0 ascheck 0 n
+drcheck eq r long n
+for p ulong div n 4096
+for i ulong 4096
+o = add mul p 4096 i
+v = get ascheck o
+drcheck eq v get arbuf o
+end
+end
+end
+fn main to int
+atsetup 0
+drcheck eq arboot 1 128 0
+drcheck eq mmwalloc get arbase 0 get arused 0 MMOK
+g = get mmwgen 0
+drcheck eq mmwpublish g MMESTATE
+drcheck eq arstage add g 1 MMEGEN
+put arbase 0 add get arbase 0 4096
+drcheck eq arstage g MMEINVAL
+put arbase 0 sub get arbase 0 4096
+drcheck eq arstage g MMOK
+asbytes
+drcheck eq mmwdmap g 17 MMOK
+drcheck eq arstage g MMOK
+asbytes
+drcheck eq mmwpublish g MMOK
+drcheck eq arstage g MMESTATE
+drcheck eq arlose g MMESTATE
+drcheck eq bpoll 0
+drcheck eq bpoll -11
+drcheck eq arlose add g 1 MMEGEN
+drcheck eq arlose g MMOK
+drcheck eq get mmwst 0 MMWQUAR
+drcheck eq mmwclose g MMEBUSY
+drcheck ne get mmwh 0 0
+drcheck eq get drunmaps 0 0
+drcheck eq get drdrops 0 0
+ret 0
+end
