@@ -11,8 +11,8 @@ the draft branch `feat/vfio-dma-bar` (omega-mv#890, commit `397e6704`, on #878 `
 It adds the `vfioctl` and `vfiomap` words plus IOMMU_MAP_DMA/UNMAP_DMA and the writable `vfiomapw` this
 driver needs. The pin moves to omega-mv main after those PRs are reviewed and merged.
 
-`DESIGN.md` (PROPOSED, no code yet) records the isolation model, the submit ABI and the ordering model:
-one GPU VA space per client with no pushbuffer parser, per-buffer read/write fences, and no BAR1.
+`DESIGN.md` records the proposed isolation/submit/cache model and the implemented, host-exercised owned
+DMA-window lifecycle. Hardware execution and the Linux-kernel replacement remain NOT_RUN.
 
 ## W0: bind, read identity, release
 
@@ -81,6 +81,7 @@ reference byte for byte, and each mutant script changes one line at a time and r
 | `gsp/seq.om` (GSP_RUN_CPU_SEQUENCER, CPU side) | `gpu/gsp_seq.c` | `tests/seq_diff.sh` | `tests/mutants-seq.sh` |
 | `gsp/sha2.om`, `gsp/inflate.om`, `gsp/fw.om`, `gsp/bindata.om`, `fwprep.om` (firmware inputs) | `ck_gsp_fw_inspect.c`, `ck_gsp_bindata_extract.c`, `argus/sha256.c` | `tests/fw_diff.sh` | `tests/mutants-fw.sh` |
 | `chan/gmmu.om`, `chan/mem.om`, `chan/chan.om`, `chan/sim.om` (page tables, buffers, channels; simulator mode only) | `gpu/gmmu.c`, `gpu_mem.c`, `gpu_chan.c`, `gpu_sim.c` | `tests/chan_diff.sh` | `tests/mutants-chan.sh` |
+| `chan/dma.om`, owned backend of `chan/gmmu.om` (Linux userspace VFIO; not a kernel module) | Linux VFIO ABI and pinned Omega handle contract | `tests/dma_host.sh` | 11 compiling ownership/order/range/error mutants in the same gate |
 | `chan/params.om` (RM alloc/control records for GSP-RM, NVIDIA 580.173.02 layouts) | NVIDIA headers | `tests/params_diff.sh` | `tests/mutants-chan.sh` |
 | `gsp/rpc.om`, `gsp/boot.om` (SWAP_RX transport frames, boot handshake, correlated RM transactions and quarantine; replay only) | `dev/gb10_gsp_boot.c` and pinned vendor protocol | `tests/rpc_diff.sh` | `tests/mutants-rpc.sh` |
 | `gsp/arena.om`, `gsp/connect.om` (bounded WPR/libos/log/radix/FMC/COT composition and preboot queue attachment) | `dev/gb10_gsp_boot.c` | `tests/arena_diff.sh` | `tests/mutants-arena.sh` |
@@ -88,6 +89,21 @@ reference byte for byte, and each mutant script changes one line at a time and r
 `fwprep FWFILE OGKMSRC OUTDIR` reads the signed `gsp_ga10x.bin` (unchanged) and the NVIDIA open-source
 bindata tables, and writes `fmc.img`, `fmc.hash`, `fmc.pubkey`, `fmc.sig`, `bl.img` and, last,
 `fw.manifest`. Channel ops other than the simulator (mode 0) trap; on the GB10 they go through GSP RPC.
+
+The hardware backing assumption is now explicit: `mmwinit` keeps the simulator array; `mmwalloc` owns
+shared anonymous `mapnew` memory and CPU accesses use the live handle plus offset. The IOVA, CPU base
+and GPU VA are distinct. `mmwdmap` maps before `mmwpublish`; a never-published window unmaps its whole
+recorded extent before dropping backing. Epoch checks refuse stale users. Publication is sticky:
+timeouts, uncertain mapping/completion and partial/unexpected unmap results quarantine backing.
+No documented idle-proof API exists, so published/quarantined backing cannot be reclaimed or reset.
+The caller exclusively owns container/process lifetime; this is not crash-safe containment.
+See `DESIGN.md` section 4 for the exact state contract and required future GSP publication callsites.
+
+`OMC=/path/to/pinned/omc sh tests/dma_host.sh` passes 23 host replay/boundary cases, real invalid-fd
+MAP_DMA retry/drop refusal, and 11 compiling negative-control mutants. Only anonymous host memory and
+invalid fd -1 are exercised by the real backend; the DMA success/error transport is explicit test-only
+link-time replay. No device open/release, DMA, hardware MMIO or reset is performed. The separate
+simulator diff remains byte-identical across 391 lines. Hardware: **NOT_RUN**.
 
 Test-only referees and harnesses (disclosed; never linked into the driver): `tests/seq_ref.c` and
 `tests/params_ref.c` (C), the aienux C tools built fresh by the diff scripts, and the shell scripts in

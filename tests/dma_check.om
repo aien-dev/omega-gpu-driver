@@ -1,0 +1,314 @@
+note Host-only owned DMA-window lifecycle checks. Combine with dma_replay.om, never production.
+note No VFIO open, DMA, MMIO or device action. Production invalid-fd check is dma_badfd.om.
+note WolframLanguageEvaluator endian vectors -> 72623859790382856, 84281096, 72057594037927944.
+fn drcheck ok bool to void
+if not ok
+exit 1
+end
+end
+fn drfresh to ulong
+drcheck eq mmwalloc 2147483648 1048576 MMOK
+drcheck ne get mmwh 0 0
+drcheck ne get mmwcpu 0 0
+drcheck ne get mmwcpu 0 get mmwb 0
+ret get mmwgen 0
+end
+fn drprep to void
+drcheck eq mmasinit get mmwb 0 64 MMOK
+drcheck eq gminit 4 add get mmwb 0 262144 128 8589934592 GMOK
+end
+fn drretained g ulong h long to void
+drcheck eq get mmwst 0 MMWQUAR
+drcheck eq get mmwh 0 h
+drcheck eq mapaddr h get mmwcpu 0
+drcheck eq mmwclose g MMEBUSY
+drcheck eq mmwinit 0 4096 MMEBUSY
+drcheck eq get drdrops 0 0
+end
+fn main to int
+b = new uchar 2 0
+hs = new long 128 0
+if ne argcnt 2
+ret 2
+end
+n = argread 1 b 0 2
+if ne n 1
+ret 2
+end
+c = get b 0
+if eq c 119
+note w: exhaust only anonymous host mapping slots; allocation failure must not publish any state.
+for i ulong 128
+v = mapnew -1 0 4096 3 33
+drcheck gt v 0
+put hs i v
+end
+drcheck eq mmwalloc 2147483648 4096 MMEIO
+drcheck eq get mmwerr 0 -24
+drcheck eq get mmwst 0 MMWNONE
+drcheck eq get mmwgen 0 0
+for i ulong 128
+drcheck eq mapdrop get hs i 0
+end
+ret 0
+end
+if eq c 108
+note l: validate before allocation, including epoch exhaustion and explicit simulator behavior.
+drcheck eq mmwalloc 0 0 MMEINVAL
+drcheck eq mmwalloc 1 4096 MMEALIGN
+drcheck eq mmwalloc 0 4097 MMEALIGN
+drcheck eq mmwalloc MMPALIM 4096 MMERANGE
+drcheck eq mmwalloc sub MMPALIM 4096 8192 MMERANGE
+put mmwgen 0 18446744073709551615
+drcheck eq mmwalloc 0 4096 MMEGEN
+put mmwgen 0 0
+drcheck eq mmwinit 0 4096 MMOK
+mmwr64 0 72623859790382856
+drcheck eq get mmwin 0 8
+drcheck eq mmrd64 0 72623859790382856
+drcheck eq mmwclose get mmwgen 0 MMOK
+ret 0
+end
+g = drfresh
+h = get mmwh 0
+p = get mmwb 0
+if eq c 97
+note a: handle-backed CPU access never touches simulator array, with exact end and zero extent.
+put mmwin 0 199
+mmwr64 p 72623859790382856
+drcheck eq mmrd64 p 72623859790382856
+drcheck eq get mmwin 0 199
+drcheck eq mapget h 0 4 84281096
+mmwr32 add p 16 287454020
+drcheck eq mmrd32 add p 16 287454020
+mmwr8 add p 24 99
+drcheck eq mapget h 24 4 99
+mmwr64 add p 32 72623859790382856
+mmzero add p 33 6
+drcheck eq mmrd64 add p 32 72057594037927944
+mmwr64 add p sub get mmws 0 8 42
+drcheck eq mmrd64 add p sub get mmws 0 8 42
+mmzero add p get mmws 0 0
+drcheck eq mmwclose g MMOK
+drcheck eq mmwdmap g 17 MMEGEN
+drcheck eq mmwalloc p 1048576 MMOK
+drcheck ne get mmwgen 0 g
+drcheck ne get mmwh 0 h
+drcheck eq mmwclose get mmwgen 0 MMOK
+ret 0
+end
+if eq c 120
+note x: never-published buffers can be freed/reused without publishing a page-table root.
+drprep
+drcheck eq gmalloc 4096 1 0 GMOK
+slot = get gmout 0
+drcheck eq gmfree slot GMOK
+drcheck eq get mmwst 0 MMWOWN
+drcheck eq gmalloc 4096 1 0 GMOK
+drcheck eq get gmout 0 slot
+drcheck eq gmfree slot GMOK
+drcheck eq mmwclose g MMOK
+ret 0
+end
+if eq c 109
+note m: driver preflight itself rejects end+1 span, independent of compiler's second bounds check.
+x = mmwoff add p sub get mmws 0 4 8 false
+ret int x
+end
+if eq c 110
+note n: compiler rejects misaligned owned accesses. Expected trap 3.
+x = mmrd64 add p 1
+ret int x
+end
+if eq c 111
+note o: stale handle rejected after successful owned drop. Expected trap 3.
+drcheck eq mmwclose g MMOK
+x = mapget h 0 8
+ret int x
+end
+if eq c 113
+note q: negative IOVA offset is refused before unsigned subtraction. Expected trap 3.
+x = mmrd32 sub p 4
+ret int x
+end
+if eq c 114
+note r: overrun zero refuses before changing any memory. Expected trap 3.
+mmzero add p sub get mmws 0 4 8
+ret 1
+end
+if eq c 115
+note s: stale allocator and AS epochs refuse after a window is replaced.
+drprep
+drcheck eq gmalloc 4096 1 0 GMOK
+old = get gmout 0
+drcheck eq mmwclose g MMOK
+g = drfresh
+drcheck not gmlive old
+drcheck eq gmfree old GMESTATE
+drcheck eq gmalloc 4096 1 0 GMESTATE
+drcheck eq mmmap 8589934592 add p 262144 4096 MMSZ4K 0 0 MMEGEN
+drcheck eq mmwclose g MMOK
+ret 0
+end
+if eq c 116
+note t: a successfully unmapped window whose mapdrop fails is retained, not forgotten.
+put drdrc 0 -5
+drcheck eq mmwclose g MMEIO
+drcheck eq get mmwh 0 h
+drcheck eq get mmwst 0 MMWQUAR
+drcheck eq get drdrops 0 1
+drcheck eq mmwclose g MMEBUSY
+ret 0
+end
+if eq c 100
+note d: a proven invalid fd never mapped anything and allows one clean retry.
+put drmrc 0 -9
+drcheck eq mmwdmap g 17 MMEIO
+drcheck eq get mmwst 0 MMWOWN
+put drmrc 0 0
+end
+if eq c 99
+note c: any unclassified mapping error is uncertain; do not speculative-unmap an overlapping range.
+put drmrc 0 -22
+drcheck eq mmwdmap g 17 MMEIO
+drretained g h
+drcheck eq get drunmaps 0 0
+drcheck eq mmwdmap g 17 MMESTATE
+ret 0
+end
+if eq c 107
+drprep
+gsinit p get mmws 0
+put gsi 5 1
+end
+if or eq c 106 eq c 118
+drprep
+drcheck eq gmalloc 4096 1 0 GMOK
+end
+drcheck eq mmwpublish g MMESTATE
+drcheck eq mmwdmap add g 1 17 MMEGEN
+if eq c 100
+drcheck eq get drmaps 0 1
+else
+drcheck eq get drmaps 0 0
+end
+drcheck eq mmwdmap g 17 MMOK
+drcheck eq mmwdmap g 17 MMESTATE
+drcheck eq get mmwfd 0 17
+if eq c 107
+note k: modelled register timeout quarantines; simulator completion is never an owned idle proof.
+drcheck eq mminval 1 MMETIME
+drretained g h
+drcheck eq mmasinit p 64 MMEBUSY
+drcheck eq gminit 4 add p 262144 128 8589934592 GMESTATE
+ret 0
+end
+if or eq c 106 eq c 118
+note j/v: map-before-publish, then no buffer reuse/reset/drop even with simulator mode zero.
+drcheck eq mmwpublish g MMOK
+drcheck eq mmwpublish g MMOK
+drcheck eq mmasinit p 64 MMEBUSY
+drcheck eq gminit 4 add p 262144 128 8589934592 GMESTATE
+drcheck eq mmmap 8589934592 add p 262144 4096 MMSZ4K 0 0 MMEBUSY
+drcheck eq gmalloc 4096 1 0 GMESTATE
+if eq c 118
+note v: writes after quarantine are refused. Expected trap 9.
+r = mmwquar g
+mmwr32 p 1
+ret 1
+end
+drcheck eq gmfree get gmout 0 GMETIME
+drretained g h
+drcheck eq gmcount GMQUAR 1
+ret 0
+end
+if eq c 117
+note u: an owned channel cannot use the array simulator. Refusal exposes no DMA reference.
+drprep
+drcheck eq chcreate 0 1 0 8 CHEBIND
+drcheck eq get mmwst 0 MMWDMA
+put drusize 0 get mmws 0
+drcheck eq mmwclose g MMOK
+ret 0
+end
+if eq c 101
+put drurc 0 -5
+end
+put drusize 0 get mmws 0
+if eq c 102
+put drusize 0 4096
+end
+if eq c 103
+put drusize 0 0
+end
+if eq c 104
+put drusize 0 add get mmws 0 4096
+end
+if eq c 105
+put drdrc 0 -5
+end
+if and ge c 101 le c 105
+drcheck eq mmwclose g MMEIO
+if eq c 105
+drcheck eq get drdrops 0 1
+drcheck eq get mmwh 0 h
+drcheck eq get mmwst 0 MMWQUAR
+else
+drretained g h
+end
+drcheck eq get drunmaps 0 1
+ret 0
+end
+note b/d: full exact unmap must precede the sole successful drop.
+drcheck eq mmwclose g MMOK
+drcheck eq get drunmaps 0 1
+drcheck eq get drdrops 0 1
+drcheck eq get mmwst 0 MMWNONE
+drcheck eq get mmwh 0 0
+ret 0
+end
+fn drdma op ulong fd int h long iova ulong size ulong to long
+if or ne h get mmwh 0 ne iova get mmwb 0
+exit 80
+end
+if or ne size get mmws 0 ne mapaddr h get mmwcpu 0
+exit 81
+end
+if ne fd 17
+exit 82
+end
+if eq op 1
+if or ne get drlive 0 0 ne get mmwst 0 MMWOWN
+exit 83
+end
+put drmaps 0 add get drmaps 0 1
+r = get drmrc 0
+if eq r 0
+put drlive 0 1
+end
+ret r
+end
+if or ne op 2 ne get drlive 0 1
+exit 84
+end
+if ne get mmwst 0 MMWDMA
+exit 85
+end
+put drunmaps 0 add get drunmaps 0 1
+put mmduout 0 get drusize 0
+r = get drurc 0
+if and eq r 0 eq get drusize 0 size
+put drlive 0 0
+end
+ret r
+end
+fn drdrop h long to long
+if or ne get drlive 0 0 ne h get mmwh 0
+exit 86
+end
+put drdrops 0 add get drdrops 0 1
+if ne get drdrc 0 0
+ret get drdrc 0
+end
+ret mapdrop h
+end
