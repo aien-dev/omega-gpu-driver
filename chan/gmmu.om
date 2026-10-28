@@ -1,18 +1,24 @@
 note chan/gmmu.om: GB10 (Blackwell, ver3) GPU page tables and TLB invalidate, ported from aienux PR #441
 note native/kernel/gpu/gmmu.c and gmmu.h (branch pr441 @ c5bb3a4b). Library unit: no main. Prefix mm / MM.
-note Concatenate with chan/mem.om, chan/chan.om, chan/sim.om (the mode 0 device) before a test or driver.
+note Concatenate with chan/dma.om, chan/mem.om, chan/chan.om, chan/sim.om before a test or driver.
 note
-note Window: the C takes any caller window (cpu pointer, pa_base, size). Omega cannot hand out a pointer,
-note so the window is the one global mmwin (8 MiB), at bus address mmwb with mmws bytes in use; mmwinit
-note sets them. The page-table pool, the buffers of chan/mem.om and the channel's rings all live inside it,
-note and chan/sim.om reads GPU-visible memory from the same array (in the C the simulator's mem is the
-note window too). On hardware the integrator DMA-maps mmwin and passes its IOVA as mmwb.
+note Two explicit memory backends: mmwinit selects the simulator's mmwin array. mmwalloc owns a
+note shared anonymous mapnew handle; mmwdmap maps that whole extent into an already-authorized VFIO
+note container. mmwb is IOVA, mmwcpu is informational CPU base, mmmap's va is GPU VA: never aliases.
+note No array address is a DMA handle. CPU access to owned memory is handle plus checked byte offset.
+note Publication is sticky; published/quarantined backing and its suballocations are never recycled.
 note
 note Register seam (as gsp/mmio.om gsprd / gspwr): mmmode 0 = simulator (chan/sim.om gsrd / gswr),
 note mmmode 1 = 4-byte mapget / mapset on the vfiomapw BAR0 handle in mmbar, any other mode traps 9.
 note
 note API (state in globals; a global is never an argument):
-note   mmwinit base size -> long      window at bus address base, size bytes (1..8388608)
+note   mmwinit base size -> long      simulator array only; refuses replacement of any owned window
+note   mmwalloc iova size -> long     own anonymous RW backing; mmwh handle, mmwgen monotonic epoch
+note   mmwdmap gen fd -> long         whole-window DMA map; retains caller-owned container fd identity
+note   mmwpublish gen -> long         BEFORE exposing any IOVA; no hardware idle/reclaim API exists
+note   mmwquar gen -> long            uncertainty latch; no retry/unmap/drop after quarantine
+note   mmwclose gen -> long           unmap exact original extent BEFORE drop, unpublished only
+note   mmwerr holds last signed OS result; MMEIO/MMEGEN/MMESTATE are backend statuses 9/10/11
 note   mmasinit pool pages -> long    ck_gmmu_as_init: page-table pool of pages 4 KiB pages at pool
 note   mmmap va pa size page ap pcf   ck_gmmu_map; mmunmap va size page: ck_gmmu_unmap
 note   mminval budget -> long         ck_gmmu_invalidate (poll the trigger register budget times)
@@ -34,6 +40,14 @@ const MMENOMEM long 5
 const MMENOENT long 6
 const MMETIME long 7
 const MMEDEAD long 8
+const MMEIO long 9
+const MMEGEN long 10
+const MMESTATE long 11
+const MMWNONE ulong 0
+const MMWOWN ulong 1
+const MMWDMA ulong 2
+const MMWPUB ulong 3
+const MMWQUAR ulong 4
 note walk results: free, mapped, missing (create 0), conflict
 const MMWFREE ulong 0
 const MMWMAP ulong 1
@@ -67,6 +81,15 @@ global mmwb ulong 1
 global mmws ulong 1
 global mmmode ulong 1
 global mmbar long 1
+global mmwkind ulong 1
+global mmwst ulong 1
+global mmwh long 1
+global mmwcpu ulong 1
+global mmwgen ulong 1
+global mmwfd int 1
+global mmwerr long 1
+global mmasep ulong 1
+global mmbyte uchar 1
 global mmptpa ulong 64
 global mmptus uchar 64
 global mmptn ulong 1
@@ -88,6 +111,11 @@ end
 ret mapget get mmbar 0 off 4
 end
 fn mmregwr off ulong v ulong to void
+if eq get mmwkind 0 1
+if ne mmwpublish get mmwgen 0 MMOK
+trap 9
+end
+end
 m = get mmmode 0
 if eq m 0
 gswr off v
@@ -101,19 +129,198 @@ if ne r 0
 trap 9
 end
 end
-fn mmwinit base ulong size ulong to long
+note The caller owns container lifetime exclusively. No fork, fd close/reuse or process restart may
+note release quarantined resources. This process-local latch is not crash-safe DMA containment.
+fn mmwshape base ulong size ulong to long
 if or eq size 0 gt size MMWINMAX
 ret MMEINVAL
 end
-if lt add base size base
+if or ge base MMPALIM gt size sub MMPALIM base
 ret MMERANGE
+end
+ret MMOK
+end
+fn mmwnext to long
+if eq get mmwgen 0 18446744073709551615
+ret MMEGEN
+end
+put mmwgen 0 add get mmwgen 0 1
+put mmptn 0 0
+put mmroot 0 0
+put mmasep 0 0
+put mmdead 0 0
+ret MMOK
+end
+fn mmwinit base ulong size ulong to long
+if ne get mmwkind 0 0
+ret MMEBUSY
+end
+r = mmwshape base size
+if ne r MMOK
+ret r
+end
+r = mmwnext
+if ne r MMOK
+ret r
 end
 put mmwb 0 base
 put mmws 0 size
+put mmwst 0 MMWOWN
 ret MMOK
 end
+fn mmwalloc iova ulong size ulong to long
+if ne get mmwst 0 MMWNONE
+ret MMEBUSY
+end
+r = mmwshape iova size
+if ne r MMOK
+ret r
+end
+if or ne and iova 4095 0 ne and size 4095 0
+ret MMEALIGN
+end
+if eq get mmwgen 0 18446744073709551615
+ret MMEGEN
+end
+h = mapnew -1 0 size 3 33
+if lt h 0
+put mmwerr 0 h
+ret MMEIO
+end
+r = mmwnext
+put mmwh 0 h
+put mmwcpu 0 mapaddr h
+put mmwb 0 iova
+put mmws 0 size
+put mmwfd 0 -1
+put mmwkind 0 1
+put mmwst 0 MMWOWN
+put mmwerr 0 0
+ret r
+end
+fn mmwepoch gen ulong to bool
+ret and ne get mmwst 0 MMWNONE eq gen get mmwgen 0
+end
+fn mmwdmap gen ulong fd int to long
+if not mmwepoch gen
+ret MMEGEN
+end
+if or ne get mmwkind 0 1 ne get mmwst 0 MMWOWN
+ret MMESTATE
+end
+note Reconstruct request on every attempt: compiler replaces vaddr handle even on ioctl failure.
+r = mmdmaop 1 fd get mmwh 0 get mmwb 0 get mmws 0
+put mmwerr 0 r
+if eq r 0
+put mmwfd 0 fd
+put mmwst 0 MMWDMA
+ret MMOK
+end
+note EBADF proves no ioctl target was reached. All other failures retain uncertain ownership.
+if ne r -9
+put mmwfd 0 fd
+put mmwst 0 MMWQUAR
+end
+ret MMEIO
+end
+fn mmwpublish gen ulong to long
+if not mmwepoch gen
+ret MMEGEN
+end
+if ne get mmwkind 0 1
+ret MMESTATE
+end
+if eq get mmwst 0 MMWPUB
+ret MMOK
+end
+if ne get mmwst 0 MMWDMA
+ret MMESTATE
+end
+put mmwst 0 MMWPUB
+ret MMOK
+end
+fn mmwquar gen ulong to long
+if not mmwepoch gen
+ret MMEGEN
+end
+if ne get mmwkind 0 1
+ret MMESTATE
+end
+put mmwst 0 MMWQUAR
+put mmdead 0 1
+ret MMOK
+end
+fn mmwmutable to bool
+if eq get mmwst 0 MMWNONE
+ret false
+end
+if eq get mmwkind 0 0
+ret true
+end
+ret or eq get mmwst 0 MMWOWN eq get mmwst 0 MMWDMA
+end
+fn mmwclose gen ulong to long
+if not mmwepoch gen
+ret MMEGEN
+end
+if not mmwmutable
+ret MMEBUSY
+end
+if eq get mmwkind 0 1
+if eq get mmwst 0 MMWDMA
+r = mmdmaop 2 get mmwfd 0 get mmwh 0 get mmwb 0 get mmws 0
+put mmwerr 0 r
+if or ne r 0 ne get mmduout 0 get mmws 0
+r = mmwquar gen
+ret MMEIO
+end
+put mmwst 0 MMWOWN
+end
+r = mmdrop get mmwh 0
+put mmwerr 0 r
+if ne r 0
+r = mmwquar gen
+ret MMEIO
+end
+end
+put mmwh 0 0
+put mmwcpu 0 0
+put mmwfd 0 -1
+put mmwb 0 0
+put mmws 0 0
+put mmwkind 0 0
+put mmwst 0 MMWNONE
+put mmptn 0 0
+put mmroot 0 0
+put mmasep 0 0
+ret MMOK
+end
+fn mmwoff pa ulong n ulong wr bool to ulong
+if eq get mmwst 0 MMWNONE
+trap 3
+end
+if and wr eq get mmwst 0 MMWQUAR
+trap 9
+end
+b = get mmwb 0
+s = get mmws 0
+if lt pa b
+trap 3
+end
+o = sub pa b
+if gt o s
+trap 3
+end
+if gt n sub s o
+trap 3
+end
+ret o
+end
 fn mmrd64 pa ulong to ulong
-o = sub pa get mmwb 0
+o = mmwoff pa 8 false
+if eq get mmwkind 0 1
+ret mapget get mmwh 0 o 8
+end
 v = ulong 0
 for i ulong 8
 v = or shl v 8 ulong get mmwin add o sub 7 i
@@ -121,13 +328,23 @@ end
 ret v
 end
 fn mmwr64 pa ulong v ulong to void
-o = sub pa get mmwb 0
+o = mmwoff pa 8 true
+if eq get mmwkind 0 1
+r = mapset get mmwh 0 o 8 v
+if ne r 0
+trap 9
+end
+ret
+end
 for i ulong 8
 put mmwin add o i uchar and shr v mul i 8 255
 end
 end
 fn mmrd32 pa ulong to ulong
-o = sub pa get mmwb 0
+o = mmwoff pa 4 false
+if eq get mmwkind 0 1
+ret mapget get mmwh 0 o 4
+end
 v = ulong 0
 for i ulong 4
 v = or shl v 8 ulong get mmwin add o sub 3 i
@@ -135,18 +352,50 @@ end
 ret v
 end
 fn mmwr32 pa ulong v ulong to void
-o = sub pa get mmwb 0
+o = mmwoff pa 4 true
+if eq get mmwkind 0 1
+r = mapset get mmwh 0 o 4 v
+if ne r 0
+trap 9
+end
+ret
+end
 for i ulong 4
 put mmwin add o i uchar and shr v mul i 8 255
 end
 end
 fn mmwr8 pa ulong v uchar to void
-put mmwin sub pa get mmwb 0 v
+o = mmwoff pa 1 true
+if eq get mmwkind 0 1
+put mmbyte 0 v
+r = mapwrite get mmwh 0 o mmbyte 0 1
+if ne r 1
+trap 9
+end
+ret
+end
+put mmwin o v
 end
 fn mmzero pa ulong n ulong to void
-o = sub pa get mmwb 0
+o = mmwoff pa n true
+if gt n 1000000
+trap 4
+end
+if eq get mmwkind 0 0
 for i ulong n
 put mmwin add o i 0
+end
+ret
+end
+off = ulong 0
+while lt off n bound 999999
+if and eq and add o off 7 0 ge sub n off 8
+mmwr64 add pa off 0
+off = add off 8
+else
+mmwr8 add pa off 0
+off = add off 1
+end
 end
 end
 note entry encoders (gmmu.c ck_gmmu_pde / ck_gmmu_dual_pde / ck_gmmu_pte)
@@ -231,6 +480,9 @@ end
 ret le size sub s o
 end
 fn mmptalloc to long
+if not mmwmutable
+ret MMEBUSY
+end
 n = get mmptn 0
 for i ulong n
 if eq get mmptus i 0
@@ -253,6 +505,12 @@ end
 ret c
 end
 fn mmasinit pool ulong pages ulong to long
+if not mmwmutable
+ret MMEBUSY
+end
+if and eq get mmwkind 0 1 eq get mmasep 0 get mmwgen 0
+ret MMEBUSY
+end
 if or or eq get mmws 0 0 or lt pages 2 gt pages MMMAXPT ne and pool 4095 0
 ret MMEINVAL
 end
@@ -261,6 +519,7 @@ if not ok
 ret MMERANGE
 end
 put mmptn 0 pages
+put mmasep 0 get mmwgen 0
 put mmdead 0 0
 for i ulong MMMAXPT
 if lt i pages
@@ -437,6 +696,12 @@ end
 ret need
 end
 fn mmmap va ulong pa ulong size ulong page ulong ap ulong pcf ulong to long
+if not mmwmutable
+ret MMEBUSY
+end
+if ne get mmasep 0 get mmwgen 0
+ret MMEGEN
+end
 rc = mmchk va size page
 if ne rc MMOK
 ret rc
@@ -470,6 +735,12 @@ end
 ret MMOK
 end
 fn mmunmap va ulong size ulong page ulong to long
+if not mmwmutable
+ret MMEBUSY
+end
+if ne get mmasep 0 get mmwgen 0
+ret MMEGEN
+end
 rc = mmchk va size page
 if ne rc MMOK
 ret rc
@@ -493,6 +764,15 @@ fn mminval budget ulong to long
 if ne get mmdead 0 0
 ret MMEDEAD
 end
+if or eq get mmroot 0 0 ne get mmasep 0 get mmwgen 0
+ret MMEGEN
+end
+if eq get mmwkind 0 1
+r = mmwpublish get mmwgen 0
+if ne r MMOK
+ret r
+end
+end
 pdb = shr get mmroot 0 12
 mmregwr MMRPDB or shl and pdb 268435455 4 MMPDBAP
 mmregwr MMRUPR and shr pdb 28 1048575
@@ -503,5 +783,8 @@ ret MMOK
 end
 end
 put mmdead 0 1
+if eq get mmwkind 0 1
+r = mmwquar get mmwgen 0
+end
 ret MMETIME
 end

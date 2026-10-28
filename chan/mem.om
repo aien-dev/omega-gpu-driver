@@ -13,7 +13,7 @@ note   gmalloc size cache flags -> long    ck_gmem_alloc; the new slot in gmout 
 note   gmfree b / gmquar b -> long          ck_gmem_free / ck_gmem_quarantine
 note   gmcount st -> ulong                  ck_gmem_count (pages in state st)
 note   gmlive b -> bool                     slot b is a buffer in state LIVE
-note   per slot: gmbpa (bus address; the CPU view is mmwin at gmbpa - mmwb), gmbva (GPU VA), gmbsz,
+note   per slot: gmbpa (IOVA; CPU access goes through mmrd/mmwr handle+offset), gmbva (GPU VA), gmbsz,
 note   gmbca, gmbfl, gmbst, gmbgen (uint, wraps as the C uint32)
 note codes (enum ck_gmem_status): 0 GMOK, 1 GMEINVAL, 2 GMENOMEM, 3 GMESTATE, 4 GMEMAP, 5 GMETIME
 note cache: 0 cached, 1 uncached; flags: 1 host polled (needs uncached), 2 GPU read-only
@@ -45,7 +45,14 @@ global gmbfl ulong 64
 global gmbst uchar 64
 global gmbgen uint 64
 global gmout ulong 1
+global gmepoch ulong 1
 fn gminit poll ulong pab ulong pages ulong vab ulong to long
+if or not mmwmutable ne get mmasep 0 get mmwgen 0
+ret GMESTATE
+end
+if and eq get mmwkind 0 1 eq get gmepoch 0 get mmwgen 0
+ret GMESTATE
+end
 if or eq get mmptn 0 0 eq get mmws 0 0
 ret GMEINVAL
 end
@@ -62,6 +69,7 @@ put gmpoll 0 poll
 put gmpab 0 pab
 put gmvab 0 vab
 put gmpages 0 pages
+put gmepoch 0 get mmwgen 0
 for i ulong GMMAXP
 put gmpgst i GMFREE
 end
@@ -94,6 +102,9 @@ end
 ret GMOK
 end
 fn gmlive b ulong to bool
+if or eq get mmwst 0 MMWNONE ne get gmepoch 0 get mmwgen 0
+ret false
+end
 if ge b GMMAXB
 ret false
 end
@@ -107,6 +118,9 @@ put gmpgst add first i st
 end
 end
 fn gmalloc size ulong cache ulong flags ulong to long
+if or not mmwmutable ne get gmepoch 0 get mmwgen 0
+ret GMESTATE
+end
 note flags & ~3 != 0 is flags > 3 for an unsigned value
 if or or or eq size 0 gt size mul GMMAXP 4096 gt cache 1 gt flags 3
 ret GMEINVAL
@@ -190,6 +204,28 @@ end
 fn gmretire b ulong reuse bool to long
 if not gmlive b
 ret GMESTATE
+end
+if eq get mmwkind 0 1
+note No documented idle proof exists, even after successful TLB invalidation.
+if not mmwmutable
+gmsetpg b GMQUAR
+put gmbst b GMQUAR
+r = mmwquar get mmwgen 0
+ret GMETIME
+end
+note Unpublished owned buffers can retire without exposing their root through mminval.
+um = mmunmap get gmbva b get gmbsz b MMSZ4K
+if and reuse eq um MMOK
+gmsetpg b GMFREE
+put gmbst b GMFREE
+ret GMOK
+end
+gmsetpg b GMQUAR
+put gmbst b GMQUAR
+if not reuse
+ret GMOK
+end
+ret GMEMAP
 end
 um = mmunmap get gmbva b get gmbsz b MMSZ4K
 iv = um

@@ -1,6 +1,7 @@
 # omega-gpu-driver design notes
 
-Status: **PROPOSED.** None of this is implemented yet. Nothing here has run on the GB10.
+Status: sections 1-3 are **PROPOSED**. Section 4 is **IMPLEMENTED and EXERCISED on the host only**.
+Nothing here has run on GB10 hardware; hardware qualification is **NOT_RUN**.
 
 The bring-up design (GSP boot chain, RPC surface, the `ogd` launcher and manifest, the D2 window) is in the
 lane's design document and is summarised in `README.md` and `window/README.md`. This file holds the design
@@ -105,14 +106,76 @@ GPU, not that every GB10 access path is coherent.
 
 What this design takes from that:
 
-1. **The ordering model on GB10 is fences plus memory ordering.** There are no CPU/GPU cache-maintenance
-   ioctls.
+1. **The proposed ordering model is fences plus memory ordering, not a coherency proof.**
    - The CPU reads an output only after that job's write fence (§2) has signalled.
    - The submit path keeps its barriers: ring write, `dsb sy`, GPPut, `dsb sy`, doorbell.
    - Completion is a semaphore release that the CPU reads after the fence.
-   - `prep`/`fini` remain only as an ABI slot for non-coherent targets. On GB10 they check their arguments
-     (§2 rules) and do nothing else.
+   - `prep`/`fini` cannot yet be declared GB10 no-ops. NVIDIA 580.173.02
+     `src/common/sdk/nvidia/inc/nvos.h:1117-1125` explicitly warns that GPU-cached system memory is
+     not coherent with direct CPU mappings. A coherent C2C link alone does not settle GPU-cache policy.
 2. **No BAR1 VRAM mapping.** BAR1 is off on this chip: RM reports it as size 0 (above), and sysfs shows BAR0
    only (lane design §1).
    - All buffers are sysmem: pinned pages, VFIO MAP_DMA, and GMMU PTEs with the snooped sysmem aperture.
    - The CPU's view of a buffer is the CPU's own mapping of those pages.
+
+## 4. Owned userspace DMA window
+
+`chan/gmmu.om` no longer presents the simulator's global `mmwin` array as hardware DMA backing.
+`mmwinit` selects that array explicitly. `mmwalloc(iova, size)` instead owns one shared anonymous
+read/write `mapnew` handle. CPU access uses that live handle plus a checked offset through
+`mmrd32/64`, `mmwr8/32/64` and `mmzero`. The compiler's ordered word operations are used for aligned
+32/64-bit accesses; zeroing handles byte tails separately. `mmwb` is an IOVA, `mmwcpu` is an
+informational CPU virtual base, and a buffer's `gmbva` is its independent GPU VA. They are not aliases.
+
+This is a Linux **userspace VFIO** backend, not an Omega Linux kernel module or replacement for
+Linux's DMA/IOMMU implementation. It neither opens nor closes a VFIO fd, adopts a container, resets
+a device, or changes authorization. The caller must already have sole lifecycle ownership of the
+authorized container. No fork, fd close/reuse, concurrent caller, or process restart may invalidate
+the recorded tuple while it is retained. The process-local quarantine latch is not crash-safe
+containment and is not permission to run hardware.
+
+The immutable live tuple is `(mmwgen, mmwh, mmws, mmwb, mmwfd)`: epoch, owned handle, whole length,
+IOVA and container fd. `mmwgen` never wraps. Address-space, buffer and channel operations validate
+their recorded window epoch; an old slot cannot become live merely because a new window exists.
+
+| State | Allowed transition |
+|---|---|
+| NONE | `mmwalloc` -> OWN only after backing allocation succeeds |
+| OWN | `mmwdmap(epoch, fd)` -> DMA only after whole-window MAP_DMA succeeds |
+| DMA | `mmwpublish(epoch)` -> PUB **before** exposing any IOVA through boot args, mailbox, RPC, channel bind or page-directory register |
+| OWN or DMA, never published | `mmwclose(epoch)` -> NONE; DMA requires successful full exact UNMAP_DMA before `mapdrop` |
+| PUB | No reclaim/reset/reuse API; uncertain completion -> QUAR |
+| QUAR | No reclaim/reset/reuse API, including after a modelled idle or successful TLB invalidation |
+
+`chan/dma.om` reconstructs the request for every attempt: compiler `397e6704` replaces the vaddr
+handle with the CPU base even when the ioctl fails. Only EBADF is classified as proven no-target
+and remains OWN; other mapping errors retain uncertain ownership in QUAR without speculative
+UNMAP_DMA. Failed unmap, zero/partial/oversized returned extent, or failed drop retain the handle.
+The entire recorded range must be returned by UNMAP_DMA before drop. An unmap failure is never
+converted into reclamation.
+
+Publication is sticky even if the following operation fails. Page-table root publication latches
+PUB before register writes; timeout latches QUAR. Owned page-table/allocator reset, mutation and
+published-buffer reuse are refused. Simulator channel ops explicitly refuse owned backing rather
+than walking the unrelated `mmwin` array. The boot/RPC caller must invoke `mmwpublish` before
+serializing any DMA reference and `mmwquar` on uncertain post-publication completion. This backend
+does not supply those GSP callsites or invent an idle proof. No documented, exercised GB10 idle
+protocol exists here; published or quarantined memory therefore remains retained.
+
+Sources: Linux `include/uapi/linux/vfio.h:1544-1615` (whole mapping and actual returned unmap size),
+NVIDIA 580.173.02 `nvos.h:1117-1125` (cache policy warning), and
+omega-mv `397e67040fb74853c6814097fe02ae4e1ebd6f66`, `seed/host/MAPPING.md:27-45,84-98`.
+Pinned omc sha256: `bcfa582892afca8f65e551fe56867d918d86e84540c7381be8fa9ef18d0cf0f6`
+(pending omega-mv#890 stacked on #878, not main).
+
+Host evidence: `OMC=/path/to/pinned/omc sh tests/dma_host.sh` exercises anonymous memory, a real
+invalid-fd refusal/retry, 23 explicit replay/boundary cases and 11 compiling negative-control mutants.
+The replay transport is test-only link-time substitution, not a runtime fallback or DMA evidence.
+`tests/chan_diff.sh` preserves the simulator's 391-line byte-identical C-reference trace.
+Observed exit 0 for both gates. Replay binary sha256:
+`06f290ccc82f33cfa2ae14b8a0604ba722988b93e6ff7299259b8779cc7a9575`;
+production invalid-fd check binary sha256:
+`e2dfe13d77b4ae92b91b2ae6751eb1f107420754547b4da5fddf56058697ec60`.
+The gate emits source-file and binary checksums on each run; those are compiler/host evidence only.
+No VFIO device was opened and no MMIO, DMA, reset, driver or service action was performed.
+Hardware and Linux-kernel execution: **NOT_RUN**.
