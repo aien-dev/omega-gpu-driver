@@ -1,5 +1,5 @@
-note gsp/boot.om: replay-only boot/event and one-in-flight RM state machine.
-note Compose rpc.om, sysinfo.om, chan/params.om before this unit. Never calls seq/MMIO or chan hardware ops.
+note gsp/boot.om: boot/event and one-in-flight RM policy. State9 alone NEVER grants hardware readiness.
+note Compose exactly one explicit binding: gsp/replay.om or mapped gsp/transport.om; no implicit fallback.
 note States 0 closed,1 prepared,2 sysinfo queued,3 registry done,4 waiting INIT_DONE,
 note 5 guest handshake needed,6 waiting handshake,7 static request needed,8 waiting static,
 note 9 REPLAY_READY,10 waiting RM reply,11 sequencer suspended,12 quarantined.
@@ -23,9 +23,13 @@ global bselen ulong 1
 fn bfail code long to long
 put bstate 0 12
 put rqdead 0 1
+blost
 ret code
 end
 fn breset to long
+if not bcanrst
+ret -10
+end
 if eq get bgen 0 RQU32
 ret -10
 end
@@ -43,7 +47,7 @@ end
 for i ulong 936
 put rqpay i get siout i
 end
-r = rqsend 72 936 936 false
+r = bemit 72 936 936 false
 if ne r 0
 ret r
 end
@@ -62,7 +66,7 @@ end
 if or ne rqget32 4 0 n eq rqget32 4 4 0
 ret -1
 end
-r = rqsend 73 n n false
+r = bemit 73 n n false
 if ne r 0
 ret r
 end
@@ -94,7 +98,7 @@ if gt n 256
 ret -1
 end
 end
-r = rqsend 1 792 792 true
+r = bemit 1 792 792 true
 if ne r 0
 ret r
 end
@@ -111,7 +115,7 @@ ret -10
 end
 n = get bstaticn 0
 rqclear n
-r = rqsend 65 n n true
+r = bemit 65 n n true
 if ne r 0
 ret r
 end
@@ -220,7 +224,7 @@ if eq get bbudget 0 0
 ret bfail -11
 end
 put bbudget 0 sub get bbudget 0 1
-r = rqrecv
+r = bpull
 if lt r 0
 ret bfail r
 end
@@ -321,7 +325,7 @@ rqput32 4 20 n
 for i ulong n
 put rqpay add 32 i get pabuf i
 end
-r = rqsend 103 32 add 32 n true
+r = bemit 103 32 add 32 n true
 if ne r 0
 ret r
 end
@@ -348,7 +352,7 @@ rqput32 4 16 n
 for i ulong n
 put rqpay add 40 i get pabuf i
 end
-r = rqsend 76 add 40 n add 40 n true
+r = bemit 76 add 40 n add 40 n true
 if ne r 0
 ret r
 end
@@ -368,7 +372,7 @@ end
 rqclear 16
 rqput32 4 0 cli
 rqput32 4 8 obj
-r = rqsend 10 16 16 true
+r = bemit 10 16 16 true
 if ne r 0
 ret r
 end

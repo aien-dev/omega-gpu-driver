@@ -31,6 +31,14 @@ global rqpriv ulong 1
 global rqreply ulong 1
 global rqdead uchar 1
 global rqlink uchar 1
+note Preparation is private; single-use token commits sequences only after the chosen publisher succeeds.
+global rqptok ulong 1
+global rqppend uchar 1
+global rqpwr ulong 1
+global rqpcnt ulong 1
+global rqpseq uint 1
+global rqptx uint 1
+global rqpsync uchar 1
 note Array selectors avoid passing globals (not supported by pinned compiler): 0 cmd,1 stat,2 tmp,3 out,4 pay.
 fn rqbyte a ulong o ulong to uchar
 if eq a 0
@@ -116,6 +124,7 @@ put rqlen 0 0
 put rqslots 0 0
 put rqdead 0 0
 put rqlink 0 0
+put rqppend 0 0
 end
 note Replay peer queue creation is explicit input, never inferred from a boot command.
 fn rqpeer to void
@@ -160,8 +169,14 @@ o = add o rem i RQSLOT
 put rqcmd o get rqtmp i
 end
 end
-fn rqsend f ulong n ulong p ulong sync bool to long
+fn rqprep f ulong n ulong p ulong sync bool to long
 if ne get rqdead 0 0
+ret -6
+end
+if ne get rqppend 0 0
+ret -6
+end
+if eq add get rqptok 0 1 0
 ret -6
 end
 if or gt f RQU32 or gt n 65456 lt p n
@@ -191,15 +206,47 @@ if sync
 seq = get rqseq 0
 end
 rqframe f n p seq e
-rqcopy wr e
-note Host replay publication only. A future real transport must supply release fence before pointer/doorbell.
+put rqptok 0 add get rqptok 0 1
+put rqppend 0 1
+put rqpwr 0 wr
+put rqpcnt 0 e
+put rqpseq 0 seq
+put rqptx 0 get rqtx 0
+put rqpsync 0 0
+if sync
+put rqpsync 0 1
+end
+ret 0
+end
+fn rqcommit token ulong to long
+if or ne get rqppend 0 1 ne token get rqptok 0
+ret -6
+end
+if or ne get rqtx 0 get rqptx 0 ne rqget32 0 16 get rqpwr 0
+ret -6
+end
+if and ne get rqpsync 0 0 ne get rqseq 0 get rqpseq 0
+ret -6
+end
+wr = get rqpwr 0
+e = get rqpcnt 0
+seq = get rqpseq 0
 rqput32 0 16 rem add wr e RQCOUNT
 put rqsent 0 seq
 put rqtx 0 add get rqtx 0 uint 1
-if sync
+if ne get rqpsync 0 0
 put rqseq 0 add seq uint 1
 end
+put rqppend 0 0
 ret 0
+end
+fn rqsend f ulong n ulong p ulong sync bool to long
+r = rqprep f n p sync
+if ne r 0
+ret r
+end
+rqcopy get rqpwr 0 get rqpcnt 0
+ret rqcommit get rqptok 0
 end
 fn rqcapt rd ulong e ulong to void
 for i ulong mul e RQSLOT

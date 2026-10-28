@@ -1,0 +1,250 @@
+note Linux-process checked-mapping mechanism, NOT kernel transport or a hardware admission resolver.
+note Link instead of replay.om; no implicit simulator fallback, no device opens or automatic retries.
+note Coherent or explicitly cache-maintained queue memory is a mandatory external platform prerequisite.
+note Compiler397e6704 mapget/mapset use one aligned access with DSB SY before/after; bulk copies do not.
+note Legitimate pointer operations order payload stores before producer publish, acquire before capture,
+note and captured loads before consumer acknowledgement. DSB does not establish cache coherency.
+note Vendor msgq.c:411-420 SWAP_RX; message_queue_cpu.c:568-578; kernel_gsp.c:411-425.
+note Notify chain kgspSetCmdQueueHead_TU102 writes PGSP_QUEUE_HEAD(0)=0, NOT a ring cursor/SEC2 queue.
+note Caller owns validated mapping views; process-fatal mapping faults are NOT crash-safe DMA containment.
+global qtstate ulong 1
+global qtepoch ulong 1
+global qtboot ulong 1
+global qtcmd ulong 1
+global qtstat ulong 1
+global qtbar long 1
+global qttok ulong 1
+global qtpend uchar 1
+global qtrd ulong 1
+fn qtcheck to bool
+if ne get qtstate 0 1
+ret false
+end
+if not mmwepoch get qtepoch 0
+ret false
+end
+if ne get mmwst 0 MMWPUB
+ret false
+end
+ret eq get qtboot 0 get bgen 0
+end
+fn qtlose to void
+if and mmwepoch get qtepoch 0 eq get mmwst 0 MMWPUB
+r = mmwquar get qtepoch 0
+end
+put qtstate 0 2
+put rqdead 0 1
+put bstate 0 12
+end
+note Explicit mechanism attachment; success means bound spans, never qualified/coherent/hardware-ready.
+fn qtattach gen ulong bar long barsz ulong boot42 uint to long
+if ne get qtstate 0 0
+ret -6
+end
+if ne gpchip boot42 1
+ret -95
+end
+if or not mmwepoch gen ne get mmwst 0 MMWPUB
+ret -6
+end
+if or ne gen get arsepoch 0 ne get bgen 0 get arsboot 0
+ret -6
+end
+if ne get bstate 0 4
+ret -6
+end
+if or lt barsz add GPNOTIF 4 le bar 0
+ret -1
+end
+if lt get mmws 0 RQQSZ
+ret -1
+end
+c = get arcmd 0
+s = get arstat 0
+if or gt c sub get mmws 0 RQQSZ gt s sub get mmws 0 RQQSZ
+ret -1
+end
+if or ne rem c RQSLOT 0 ne rem s RQSLOT 0
+ret -1
+end
+if not or le add c RQQSZ s le add s RQQSZ c
+ret -1
+end
+if not rqshape 0
+ret -1
+end
+h = get mmwh 0
+v = mapget h add c 16 4
+if ne v rqget32 0 16
+ret -1
+end
+v = mapget h add c 32 4
+if ne v rqget32 0 32
+ret -1
+end
+put qtepoch 0 gen
+put qtboot 0 get bgen 0
+put qtcmd 0 c
+put qtstat 0 s
+put qtbar 0 bar
+put qtpend 0 0
+put qtstate 0 1
+ret 0
+end
+fn qtsend f ulong n ulong p ulong sync bool to long
+if not qtcheck
+ret -6
+end
+if ne get qtpend 0 0
+ret -6
+end
+h = get mmwh 0
+rd = mapget h add get qtstat 0 32 4
+if ge rd RQCOUNT
+qtlose
+ret -1
+end
+r = mapread h get qtstat 0 rqstat 0 32
+if ne r 32
+qtlose
+ret -6
+end
+if and ne get rqlink 0 0 not rqshape 1
+qtlose
+ret -1
+end
+rqput32 1 32 rd
+r = rqprep f n p sync
+if ne r 0
+if ne r -2
+qtlose
+end
+ret r
+end
+wr = get rqpwr 0
+e = get rqpcnt 0
+token = get rqptok 0
+for i ulong e
+slot = rem add wr i RQCOUNT
+o = add get qtcmd 0 mul add slot 1 RQSLOT
+r = mapwrite h o rqtmp mul i RQSLOT RQSLOT
+if ne r long RQSLOT
+qtlose
+ret -6
+end
+end
+note Leading DSB SY of this exact aligned store orders copied slot bytes before pointer publication.
+r = mapset h add get qtcmd 0 16 4 rem add wr e RQCOUNT
+if ne r 0
+qtlose
+ret -6
+end
+r = rqcommit token
+if ne r 0
+qtlose
+ret r
+end
+note Pointer was published: any later failure is uncertain, never unsent/retryable.
+r = qtbell get qtbar 0
+if ne r 0
+qtlose
+ret -6
+end
+ret 0
+end
+note Capture a bounded immutable prefix under one acquired producer cursor. No live reread while validating.
+fn qtsnap to long
+if not qtcheck
+ret -6
+end
+if ne get qtpend 0 0
+ret -6
+end
+if eq add get qttok 0 1 0
+ret -6
+end
+h = get mmwh 0
+s = get qtstat 0
+wr = mapget h add s 16 4
+r = mapread h s rqstat 0 32
+if ne r 32
+qtlose
+ret -6
+end
+rqput32 1 16 wr
+rd = rqget32 0 32
+put qtrd 0 rd
+put qttok 0 add get qttok 0 1
+put qtpend 0 1
+if or ge wr RQCOUNT ge rd RQCOUNT
+ret 0
+end
+avail = rem sub add wr RQCOUNT rd RQCOUNT
+if eq avail 0
+ret 0
+end
+o = add RQSLOT mul rd RQSLOT
+r = mapread h add s o rqstat o RQSLOT
+if ne r long RQSLOT
+qtlose
+ret -6
+end
+e = rqget32 1 add o 40
+if or eq e 0 or gt e 16 gt e avail
+ret 0
+end
+for i ulong sub e 1
+slot = rem add add rd i 1 RQCOUNT
+o = mul add slot 1 RQSLOT
+r = mapread h add s o rqstat o RQSLOT
+if ne r long RQSLOT
+qtlose
+ret -6
+end
+end
+ret 0
+end
+fn qtaccept token ulong to long
+if not qtcheck
+ret -6
+end
+if or ne get qtpend 0 1 ne token get qttok 0
+ret -6
+end
+if ne rqget32 0 32 get qtrd 0
+qtlose
+ret -6
+end
+put qtpend 0 0
+r = rqrecv
+if lt r 0
+qtlose
+ret r
+end
+if eq r 0
+ret 0
+end
+note Leading DSB SY is FULL: capture loads complete before the consumer store permits peer slot reuse.
+x = mapset get mmwh 0 add get qtcmd 0 32 4 rqget32 0 32
+if ne x 0
+qtlose
+ret -6
+end
+ret 1
+end
+fn bcanrst to bool
+ret eq get qtstate 0 0
+end
+fn blost to void
+qtlose
+end
+fn bemit f ulong n ulong p ulong sync bool to long
+ret qtsend f n p sync
+end
+fn bpull to long
+r = qtsnap
+if ne r 0
+ret r
+end
+ret qtaccept get qttok 0
+end

@@ -10,7 +10,7 @@ trap 'rm -rf "$t"' EXIT HUP INT TERM
 sed 's/fn main to int/fn dmatests to int/' "$R/tests/dma_check.om" > "$t/dma.om"
 sed 's/fn main to int/fn artests to int/' "$R/tests/arena_trace.om" > "$t/arena.om"
 build() {
- cat "$R/tests/dma_replay.om" "$R/chan/gmmu.om" "$R/chan/mem.om" "$R/chan/chan.om" "$R/chan/sim.om" "$t/dma.om" "$R/gsp/rpc.om" "$R/gsp/sysinfo.om" "$R/chan/params.om" "$R/gsp/boot.om" "$R/gsp/arena.om" "$R/gsp/connect.om" "$t/arena.om" "$1" "$R/tests/boot_dma.om" > "$t/all.om"
+ cat "$R/tests/dma_replay.om" "$R/chan/gmmu.om" "$R/chan/mem.om" "$R/chan/chan.om" "$R/chan/sim.om" "$t/dma.om" "$R/gsp/rpc.om" "$R/gsp/replay.om" "$R/gsp/sysinfo.om" "$R/chan/params.om" "$R/gsp/boot.om" "$R/gsp/arena.om" "$R/gsp/connect.om" "$t/arena.om" "$1" "$R/tests/boot_dma.om" > "$t/all.om"
  if ! "$OMC" < "$t/all.om" > "$t/replay"; then echo 'boot_dma: INVALID compile'; exit 2; fi
  chmod +x "$t/replay"
 }

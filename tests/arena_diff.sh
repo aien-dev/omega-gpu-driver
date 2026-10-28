@@ -12,7 +12,7 @@ git -C "$AIENUX" diff --quiet HEAD -- native/kernel/dev/gb10_gsp_boot.c native/k
 t=$(mktemp -d /tmp/arena-parity.XXXXXX)
 trap 'rm -rf "$t"' EXIT HUP INT TERM
 cc -std=c11 -O1 -Wall -Wextra -I"$AIENUX/native/kernel/dev" "$R/tests/arena_ref.c" "$AIENUX/native/kernel/dev/gb10_gsp_boot.c" -o "$t/ref"
-cat "$R/gsp/rpc.om" "$R/gsp/sysinfo.om" "$R/chan/params.om" "$R/gsp/boot.om" "$ARENA_OM" "$R/gsp/connect.om" "$R/tests/arena_trace.om" > "$t/trace.om"
+cat "$R/gsp/rpc.om" "$R/gsp/replay.om" "$R/gsp/sysinfo.om" "$R/chan/params.om" "$R/gsp/boot.om" "$ARENA_OM" "$R/gsp/connect.om" "$R/tests/arena_trace.om" > "$t/trace.om"
 if ! "$OMC" < "$t/trace.om" > "$t/replay"; then echo 'arena_diff: INVALID compile'; exit 2; fi
 chmod +x "$t/replay"
 python3 - "$t" <<'PY'

@@ -15,7 +15,7 @@ t=$(mktemp -d /tmp/rpc-replay.XXXXXX)
 trap 'rm -rf "$t"' EXIT HUP INT TERM
 cc -std=c11 -O1 -Wall -Wextra -I"$AIENUX/native/kernel/dev" "$R/tests/rpc_ref.c" "$AIENUX/native/kernel/dev/gb10_gsp_boot.c" -o "$t/ref"
 "$t/ref" > "$t/ref.frames"
-cat "$RPC_OM" "$R/gsp/sysinfo.om" "$R/chan/params.om" "$BOOT_OM" "$R/tests/rpc_trace.om" > "$t/trace.om"
+cat "$RPC_OM" "$R/gsp/replay.om" "$R/gsp/sysinfo.om" "$R/chan/params.om" "$BOOT_OM" "$R/tests/rpc_trace.om" > "$t/trace.om"
 if ! "$OMC" < "$t/trace.om" > "$t/replay"; then echo 'rpc_diff: INVALID compile'; exit 3; fi
 chmod +x "$t/replay"
 if "$t/replay" > "$t/om.frames"; then :; else

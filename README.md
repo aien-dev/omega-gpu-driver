@@ -154,18 +154,20 @@ Boot replay requires preboot system info and optional nonempty registry, explici
 INIT_DONE, SET_GUEST_SYSTEM_INFO version handshake, then STATIC_INFO of the supplied expected size.
 Private handshake result is an NV_STATUS: zero succeeds (`rpc.c:8764`); it is not a version value.
 Version renegotiation refuses instead of guessing. CPU_SEQUENCER suspends the exact received event
-until an explicit matching replay-generation/event token completes it. This does not call the existing
-MMIO-capable sequencer and does not claim that commands executed. No invented acknowledgement is sent.
+until a matching generation/event token is dispatched through `gsp/dispatch.om`. The complete stream
+is prevalidated before execution; completion is not fabricated and no acknowledgement RPC is invented.
 
 `REPLAY_READY` is host state only, never a production resolver capability. Wait budgets count caller
 polls, not elapsed time; unrelated events do not replenish them. Publication timeout or corrupt/
 uncorrelated replies quarantine the replay with pending identity retained. Late replies cannot turn
-that into success. `breset` only disposes replay images; it cannot reset hardware, prove idle, unmap
-DMA, or authorize reclaim. Unpublished queue-full refusal does not consume a sequence number.
+that into success. `breset` only disposes replay images and refuses while a mapped transport is bound;
+it cannot reset hardware, prove idle, unmap DMA, or authorize reclaim. Unpublished queue-full refusal
+does not consume a sequence number.
 
-The arena's GB10B/SEC2 profile is explicit caller input and remains unverified for the Spark target.
-It does not establish chip identity or select FSP versus SEC2: NVIDIA `kernel_gsp_gh100.c:833-890`
-branches conditionally. No device is opened to determine this here.
+The arena's GB10B/SEC2 profile remains unverified for the Spark target. `gsp/profile.om` classifies the
+published BOOT_42 architecture/implementation fields, not a measured device: vendor `nv_ref.h:149-182`
+and `nv_arch.h:51,111` identify GB1XX/GB10B; generated FSP/SEC2 HAL selection chooses SEC2/FMC COTv1,
+and `nv-firmware-chip-family-select.h:58-62` selects `gb10y`. No device is opened to select a profile.
 
 Run the host-only commands with the exact C reference checkout and pinned compiler:
 
@@ -187,19 +189,38 @@ Existing shell, coreutils, git and cc remain disclosed verification tooling, not
 
 ### Still required for independent execution
 
-Hardware is **NOT_RUN**. Actual device identity/profile selection, ownership-safe DMA queue spans,
-release/acquire publication and coherency, queue notification, real sequencer execution, channel
-binding/scheduling, completion-semaphore progress, fault handling and documented drain/recovery remain
-necessary before hardware use. Encoding a physical address does not create a mapping or prove that
-firmware read it. The owned CPU staging connection exists, but real DMA queue publication/receive
-still must use owned handles and explicit epochs, never these replay arrays as a live transport.
+Hardware is **NOT_RUN**. The Linux-process mapped mechanism is now implemented separately from the
+host replay binding: link exactly one of `gsp/replay.om` or `gsp/transport.om` (with `gsp/profile.om`
+and `gsp/notify.om`). There is no implicit transport fallback. `qtattach` requires the exact staged,
+published owned-map epoch and boot generation. `rqprep`/`rqcommit` separate construction from
+publication; stale tokens cannot publish a second time.
 
-The current compiler profile is a Linux-process ELF/VFIO profile, not Linux kernel code. A future
-Linux-hosted `.om` user-space driver could replace NVIDIA modules while retaining Linux VFIO/IOMMU
-services; that is not an Omega kernel module or a replacement for the Linux kernel. Actual `.om`
-kernel execution additionally requires a checked kernel calling/trap ABI, relocation/link profile,
-kernel-owned allocation/resource spans, ordered DMA/MMIO, IRQ/workqueue lifecycle and teardown/drain
-primitives. No C/Rust runtime substitute or new trust path is adopted by this replay.
+`qtsend` writes only owned slots, publishes command writePtr with an aligned `mapset`, then writes
+zero to PGSP_QUEUE_HEAD(0). `qtsnap` acquires peer writePtr, captures only its bounded immutable
+prefix, and `qtaccept` validates that capture before publishing host readPtr. SWAP_RX cursor ownership
+is preserved. Semantic RPC rejection can occur after transport consumption and quarantines without
+rolling back an already published cursor. Notification failure after publication is uncertain, not
+an unsent request eligible for retry. Bound mappings remain retained on timeout/error.
+
+The pinned process compiler brackets each aligned `mapget`/`mapset` with DSB SY. This orders accesses
+but does not establish cache coherency, memory attributes, cache maintenance, interrupt delivery or
+device completion. Bulk mapread/mapwrite are ordinary copies, never cursor accesses. Host peers and
+instruction inspection cannot qualify those device properties. A fatal mapping fault is not a
+recoverable status and process-local quarantine is not crash-safe containment.
+
+`chan/rmchan.om` connects the existing allocation codecs to async RM hierarchy/schedule/disable/free;
+`chan/complete.om` uses Blackwell completion-semaphore releases, never nonexistent USERD GPGet.
+Drained host tracking is not proof that GSP stopped accessing the boot arena and never authorizes its
+reclamation. Production core sequencer effects refuse regardless of host permission flags.
+
+The current compiler profile is Linux-process ELF/VFIO, not Linux kernel code. A Linux-hosted `.om`
+user-space driver could replace NVIDIA modules while retaining Linux VFIO/IOMMU services; that is not
+an Omega kernel module or a replacement for Linux. This pin does not provide kernel calling/trap ABI,
+relocation/link profile, kernel-owned allocation/resource spans, ordered DMA/MMIO or IRQ/workqueue
+lifecycle. The proposed typed kernel effects are a separate pending compiler extension, not an
+implemented trust path. Actual device identity, coherent DMA ownership, firmware authentication,
+hardware boot/RPC, engine reset/halt, interrupt handling and documented global idle/recovery still
+require implementation/qualification at those boundaries. No C/Rust runtime substitute is adopted.
 
 ## On the GB10 (authorized exclusive window only)
 
