@@ -1,0 +1,6 @@
+bf98036d4d46d45b4ecb7d6157333bbc7ab74793
+2026-10-27T02:21:49Z
+modules: iommufd.ko vfio.ko vfio-pci-core.ko vfio-pci.ko 
+wrote /home/drakestapleton/work/VfioReview/ogd/qemu/bench/initramfs.cpio.gz
+PASS w0 QEMU bench: bind, read 0x010000ed, release; 5 refusals (/home/drakestapleton/work/VfioReview/ogd/build/w0-edu.log)
+rc=0

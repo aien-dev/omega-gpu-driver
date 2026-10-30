@@ -1,0 +1,8 @@
+mount -t tracefs nodev /sys/kernel/tracing; cd /sys/kernel/tracing && for f in pci_bridge_secondary_bus_reset pci_reset_bus pcie_flr __pci_reset_function_locked pci_try_reset_function pci_reset_hotplug_slot; do echo "p:k_$f $f" >> kprobe_events || echo "kprobe $f unavailable"; done; echo 1 > events/kprobes/enable; echo 1 > tracing_on; echo kprobes armed
+for d in /sys/bus/pci/devices/*; do echo "$d $(cat $d/vendor):$(cat $d/device) group=$(basename $(readlink $d/iommu_group)) reset_method=[$(cat $d/reset_method 2>/dev/null)]"; done
+echo "=== CASE A: reset_method default"; cat /sys/bus/pci/devices/0000:01:00.0/reset_method
+echo > /sys/kernel/tracing/trace; /w0 0000:01:00.0 $(basename $(readlink /sys/bus/pci/devices/0000:01:00.0/iommu_group)) >/dev/null; echo "w0 rc=$?"; grep k_ /sys/kernel/tracing/trace | sed 's/^ *//' | cut -c1-120
+echo "=== CASE B: reset_method empty (runbook W0a)"; echo '' > /sys/bus/pci/devices/0000:01:00.0/reset_method; echo "reset_method=[$(cat /sys/bus/pci/devices/0000:01:00.0/reset_method)]"
+echo > /sys/kernel/tracing/trace; /w0 0000:01:00.0 $(basename $(readlink /sys/bus/pci/devices/0000:01:00.0/iommu_group)) >/dev/null; echo "w0 rc=$?"; grep k_ /sys/kernel/tracing/trace | sed 's/^ *//' | cut -c1-120
+echo "=== CASE C (negative control): w0 refused, wrong group 999"; echo > /sys/kernel/tracing/trace; /w0 0000:01:00.0 999 >/dev/null; echo "w0 rc=$?"; echo "k_hits=$(grep -c k_ /sys/kernel/tracing/trace)"
+echo "=== CASE B again for k_hit count"; echo > /sys/kernel/tracing/trace; /w0 0000:01:00.0 $(basename $(readlink /sys/bus/pci/devices/0000:01:00.0/iommu_group)) >/dev/null; echo "w0 rc=$?"; echo "k_hits=$(grep -c k_ /sys/kernel/tracing/trace)"

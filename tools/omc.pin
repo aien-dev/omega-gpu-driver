@@ -1,5 +1,5 @@
 # The Omega compiler omega-gpu-driver is built with. Only these bytes are trusted.
 # Parent: aien-dev/omega-mv branch feat/vfio-device-calls (draft PR), which adds vfioctl/vfiomap.
 OMEGA_REPO=https://github.com/aien-dev/omega-mv.git
-OMEGA_COMMIT=7ae2aef9b21a3885effa246975b123d5aa83f37b
-OMC_SHA256=5103a672a84ab0ac52abb2a1222fa8b16fd2a7a640d989fa3ab495034c52887e
+OMEGA_COMMIT=24b4cd6fc69063ace6fe1d8b02c90400ffd6c93f
+OMC_SHA256=5dac75437a0eaeabe086441ae776317e21e9fd0c059a979bc4db409e833cf04c

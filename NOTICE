@@ -9,14 +9,12 @@ grant permission to use the trade names, trademarks, service marks, or product
 names of the Licensor, including "AIEN", "AienOS" and "Omega".
 
 THIRD-PARTY ACKNOWLEDGEMENT:
-The GPU register offsets and field definitions used in w0.om and README.md
-(NV_PMC_BOOT_0, NV_PMC_BOOT_1, NV_PMC_BOOT_42, the BOOT_0 architecture
-field, and the NV_CONFIG_PCI_NV_0, _2 and _11 config-space registers) are taken
-from NVIDIA's open-gpu-kernel-modules, release 580.173.02,
-file src/common/inc/swref/published/nv_ref.h
-(https://github.com/NVIDIA/open-gpu-kernel-modules). No code from that file is
-copied here; the offsets are cited at each use. That file carries the following
-notice:
+Register offsets, structure layouts and constants used in this repository are
+cited from NVIDIA's open-gpu-kernel-modules, release 580.173.02
+(https://github.com/NVIDIA/open-gpu-kernel-modules), MIT; the source file is
+named at each use (for example src/common/inc/swref/published/nv_ref.h for
+NV_PMC_BOOT_0/1/42 and the NV_CONFIG_PCI_NV_* config-space registers). No code
+from those files is copied here. Those files carry the following notice:
 
   SPDX-FileCopyrightText: Copyright (c) 1993-2025 NVIDIA CORPORATION & AFFILIATES
   SPDX-License-Identifier: MIT

@@ -1,0 +1,5 @@
+== new omc 5dac75437a0eaeab
+PASS 13 VFIO compiler refusals
+rc=0
+== old omc from 2a3bd6fb (accepts DEVICE_RESET 15215)
+rc=13
