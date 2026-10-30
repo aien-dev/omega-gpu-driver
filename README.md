@@ -79,3 +79,9 @@ values. The BOOT_0 architecture field (bits 28:24) is defined at nv_ref.h:129-13
 Development follows Human-Directed Agentic Engineering (HDAE): humans define goals, architecture, constraints, acceptance criteria, and stopping points; agents implement, execute checks, diagnose failures, and revise within those boundaries. Human review retains responsibility for claims, acceptance, and release decisions.
 
 For the documented method and a systems-software case study, see Gregory M. Kurtzer, [*Ginux: Building an Independent Kernel That Runs Linux Userspace through Human-Directed Agentic Engineering* (2026)](https://doi.org/10.5281/zenodo.23682548). This does not change the QEMU-only status or authorize any device action.
+
+## Licence
+
+Apache-2.0; see `LICENSE`. `NOTICE` credits NVIDIA open-gpu-kernel-modules 580.173.02 (MIT), from which
+register offsets, structure layouts and constants are cited. Any part that becomes in-kernel Linux
+code would be `MIT OR GPL-2.0-only` instead.
