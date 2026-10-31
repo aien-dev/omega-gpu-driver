@@ -1,5 +1,6 @@
 # The Omega compiler omega-gpu-driver is built with. Only these bytes are trusted.
-# Parent: aien-dev/omega-mv branch feat/vfio-device-calls (draft PR), which adds vfioctl/vfiomap.
+# Parent: aien-dev/omega-mv branch feat/vfio-dma-bar (draft PR #890, on #878 feat/vfio-device-calls),
+# which adds vfioctl/vfiomap (#878) and IOMMU_MAP_DMA/UNMAP_DMA plus writable vfiomapw (#890).
 OMEGA_REPO=https://github.com/aien-dev/omega-mv.git
-OMEGA_COMMIT=24b4cd6fc69063ace6fe1d8b02c90400ffd6c93f
-OMC_SHA256=5dac75437a0eaeabe086441ae776317e21e9fd0c059a979bc4db409e833cf04c
+OMEGA_COMMIT=397e67040fb74853c6814097fe02ae4e1ebd6f66
+OMC_SHA256=bcfa582892afca8f65e551fe56867d918d86e84540c7381be8fa9ef18d0cf0f6

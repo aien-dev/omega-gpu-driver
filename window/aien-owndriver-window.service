@@ -1,0 +1,21 @@
+# Installed by window/d2-pre.sh --go (W1) as /etc/systemd/system/aien-owndriver-window.service and removed by
+# window/d2-restore.sh at the end of R. It exists only because a reboot ends every agent session on the Spark:
+# it carries the window across the two reboots without an operator. It runs window/d2-boot.sh once per boot,
+# which does nothing (and removes this unit) unless window/state says a step is pending. Status: NOT_RUN.
+[Unit]
+Description=aien OwnDriver window step after reboot (one-shot, removed at window close)
+After=multi-user.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=drakestapleton
+Environment=HOME=/home/drakestapleton
+WorkingDirectory=/home/drakestapleton/work/OwnDriver/omega-gpu-driver
+ExecStart=/bin/sh /home/drakestapleton/work/OwnDriver/omega-gpu-driver/window/d2-boot.sh
+# R starts the 35B from inside this unit: only the main process is stopped when the unit ends.
+KillMode=process
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target

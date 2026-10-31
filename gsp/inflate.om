@@ -1,0 +1,562 @@
+note gsp/inflate.om -- raw DEFLATE (RFC 1951) plus the bindata trailer (CRC-32, ISIZE), in OM-1.
+note Port of inf_bits, huff_construct, huff_decode, inf_codes, inf_stored, inf_fixed, inf_dynamic,
+note inflate_raw, crc32_bytes, get32le and unpack_gz_body from aienux pr441 @ c5bb3a4b
+note native/kernel/tools/ck_gsp_bindata_extract.c lines 199-389 (puff-style canonical Huffman).
+note Library unit: no main. Every name starts with inf. No dependency on any other unit.
+note
+note Caller contract: put the stored bytes in infin[0..inlen), call infsetup once, then
+note infgz inlen outlen. The plain bytes land in infout[0..outlen). Result 0 = ok, else a reason
+note code 1..22; infmsg code copies its text into infm[0..infmn).
+note Codes 1..20 are the C reasons word for word. 21 and 22 are this port's buffer bounds
+note (outlen above 16 MiB, inlen above 8 MiB); the C has no such limit (documented deviation).
+note
+note 8388608 = 8 MiB, 16777216 = 16 MiB (Wolfram 8*2^20, 16*2^20)
+const INFINMAX ulong 8388608
+const INFOUTMX ulong 16777216
+global infin uchar 8388608
+global infout uchar 16777216
+note bit reader and stream state, one element each
+global infil ulong 1
+global infip ulong 1
+global infbb ulong 1
+global infbc ulong 1
+global infol ulong 1
+global infop ulong 1
+global inferr ulong 1
+note Huffman tables: table t (0 = lencode, 1 = distcode) has counts infcnt[t*16 + len] and
+note symbols infsym[t*320 + i]; inflen holds the code lengths being built from
+global infcnt ulong 32
+global infsym ulong 640
+global inflen ulong 320
+global infor ulong 19
+global inflb ulong 29
+global infle ulong 29
+global infdb ulong 30
+global infde ulong 30
+global infm uchar 128
+global infmn ulong 1
+text INFMSGS "|inflate: input exhausted|inflate: invalid Huffman code|inflate: output longer than declared size|inflate: invalid length symbol|inflate: invalid distance symbol|inflate: distance before start of output|inflate: stored block length check failed|inflate: bad code counts|inflate: bad code-length code|inflate: repeat with no previous length|inflate: too many lengths|inflate: no end-of-block code|inflate: bad literal/length code|inflate: bad distance code|inflate: invalid block type 3|inflate: output shorter than declared size|inflate: trailing bytes after the final block|compressed array shorter than a deflate block plus its 8-byte trailer|compressed trailer: ISIZE differs from DATA SIZE|compressed trailer: CRC-32 mismatch|inflate: declared size above this port's 16 MiB buffer|compressed array above this port's 8 MiB buffer"
+note fill the constant tables (C: order[19], lbase/lext[29], dbase/dext[30])
+fn infsetup to void
+put infor 0 16
+put infor 1 17
+put infor 2 18
+put infor 3 0
+put infor 4 8
+put infor 5 7
+put infor 6 9
+put infor 7 6
+put infor 8 10
+put infor 9 5
+put infor 10 11
+put infor 11 4
+put infor 12 12
+put infor 13 3
+put infor 14 13
+put infor 15 2
+put infor 16 14
+put infor 17 1
+put infor 18 15
+put inflb 0 3
+put inflb 1 4
+put inflb 2 5
+put inflb 3 6
+put inflb 4 7
+put inflb 5 8
+put inflb 6 9
+put inflb 7 10
+put inflb 8 11
+put inflb 9 13
+put inflb 10 15
+put inflb 11 17
+put inflb 12 19
+put inflb 13 23
+put inflb 14 27
+put inflb 15 31
+put inflb 16 35
+put inflb 17 43
+put inflb 18 51
+put inflb 19 59
+put inflb 20 67
+put inflb 21 83
+put inflb 22 99
+put inflb 23 115
+put inflb 24 131
+put inflb 25 163
+put inflb 26 195
+put inflb 27 227
+put inflb 28 258
+for i ulong 29
+note lext: 0 for 0..7, then (i-4)/4 for 8..27, 0 for 28
+put infle i 0
+if and ge i 8 lt i 28
+put infle i div sub i 4 4
+end
+end
+put infdb 0 1
+put infdb 1 2
+put infdb 2 3
+put infdb 3 4
+put infdb 4 5
+put infdb 5 7
+put infdb 6 9
+put infdb 7 13
+put infdb 8 17
+put infdb 9 25
+put infdb 10 33
+put infdb 11 49
+put infdb 12 65
+put infdb 13 97
+put infdb 14 129
+put infdb 15 193
+put infdb 16 257
+put infdb 17 385
+put infdb 18 513
+put infdb 19 769
+put infdb 20 1025
+put infdb 21 1537
+put infdb 22 2049
+put infdb 23 3073
+put infdb 24 4097
+put infdb 25 6145
+put infdb 26 8193
+put infdb 27 12289
+put infdb 28 16385
+put infdb 29 24577
+for j ulong 30
+note dext: 0 for 0..3, then (j-2)/2 for 4..29
+put infde j 0
+if ge j 4
+put infde j div sub j 2 2
+end
+end
+end
+note copy reason code k (1..22) into infm[0..infmn)
+fn infmsg k ulong to void
+seg = ulong 0
+n = ulong 0
+for i ulong len INFMSGS
+c = get INFMSGS i
+if eq c 124
+seg = add seg 1
+else
+if eq seg k
+put infm n c
+n = add n 1
+end
+end
+end
+put infmn 0 n
+end
+note C inf_bits: next need bits (LSB first); -1 with inferr = 1 when the input runs out
+fn infbits need ulong to long
+while lt get infbc 0 need bound 64
+p = get infip 0
+if ge p get infil 0
+put inferr 0 1
+ret -1
+end
+put infbb 0 or get infbb 0 shl ulong get infin p get infbc 0
+put infip 0 add p 1
+put infbc 0 add get infbc 0 8
+end
+b = get infbb 0
+v = and b sub shl ulong 1 need 1
+put infbb 0 shr b need
+put infbc 0 sub get infbc 0 need
+ret long v
+end
+note C huff_construct over inflen[base..base+n) into table t: 0 = complete, -1 = over-subscribed,
+note else the number of unused codes
+fn infbuild t ulong base ulong n ulong to long
+offs = new ulong 16 0
+co = mul t 16
+for i ulong 16
+put infcnt add co i 0
+end
+for j ulong n
+l = get inflen add base j
+put infcnt add co l add get infcnt add co l 1
+end
+if eq get infcnt co n
+ret 0
+end
+left = long 1
+for k ulong 15
+left = shl left 1
+left = sub left long get infcnt add add co k 1
+if lt left 0
+ret -1
+end
+end
+put offs 1 0
+for m ulong 14
+l = add m 1
+put offs add l 1 add get offs l get infcnt add co l
+end
+so = mul t 320
+for q ulong n
+l = get inflen add base q
+if ne l 0
+put infsym add so get offs l q
+put offs l add get offs l 1
+end
+end
+ret left
+end
+note C huff_decode with table t: the symbol, or -1 (inferr 1 = input exhausted, 2 = invalid code)
+fn infdec t ulong to long
+code = long 0
+first = long 0
+index = long 0
+co = mul t 16
+for k ulong 15
+b = infbits 1
+if lt b 0
+ret -1
+end
+code = or code b
+count = long get infcnt add add co k 1
+if lt sub code count first
+x = ulong add index sub code first
+x = add x mul t 320
+ret long get infsym x
+end
+index = add index count
+first = shl add first count 1
+code = shl code 1
+end
+put inferr 0 2
+ret -1
+end
+note one literal/length symbol of C inf_codes: 0 = go on, 1 = end of block, 2 = error (inferr)
+fn infsym1 to ulong
+s = infdec 0
+if lt s 0
+ret 2
+end
+if lt s 256
+p = get infop 0
+if ge p get infol 0
+put inferr 0 3
+ret 2
+end
+put infout p uchar s
+put infop 0 add p 1
+ret 0
+end
+if eq s 256
+ret 1
+end
+y = ulong sub s 257
+if ge y 29
+put inferr 0 4
+ret 2
+end
+e = infbits get infle y
+if lt e 0
+ret 2
+end
+ln = add get inflb y ulong e
+s = infdec 1
+if lt s 0
+ret 2
+end
+y = ulong s
+if ge y 30
+put inferr 0 5
+ret 2
+end
+e = infbits get infde y
+if lt e 0
+ret 2
+end
+dist = add get infdb y ulong e
+p = get infop 0
+if gt dist p
+put inferr 0 6
+ret 2
+end
+if gt add p ln get infol 0
+put inferr 0 3
+ret 2
+end
+for i ulong ln
+put infout add p i get infout sub add p i dist
+end
+put infop 0 add p ln
+ret 0
+end
+note C inf_codes: symbols until end of block; every pass but the last writes at least one byte,
+note so the 999998 x 999998 pass budget can never be the limit for a 16 MiB output
+fn infcodes to ulong
+o = ulong 0
+while lt o 999998 bound 999999
+i = ulong 0
+while lt i 999998 bound 999999
+r = infsym1
+if eq r 1
+ret 0
+end
+if eq r 2
+ret get inferr 0
+end
+i = add i 1
+end
+o = add o 1
+end
+ret 3
+end
+note C inf_stored
+fn infstored to ulong
+put infbb 0 0
+put infbc 0 0
+p = get infip 0
+if gt add p 4 get infil 0
+ret 1
+end
+ln = or ulong get infin p shl ulong get infin add p 1 8
+nl = or ulong get infin add p 2 shl ulong get infin add p 3 8
+p = add p 4
+put infip 0 p
+note 65535 = 0xffff (Wolfram FromDigits["ffff",16])
+if ne xor ln 65535 nl
+ret 7
+end
+if gt add p ln get infil 0
+ret 1
+end
+o = get infop 0
+if gt add o ln get infol 0
+ret 3
+end
+for i ulong ln
+put infout add o i get infin add p i
+end
+put infip 0 add p ln
+put infop 0 add o ln
+ret 0
+end
+note C inf_fixed: lengths 8 (0..143), 9 (144..255), 7 (256..279), 8 (280..287); distances 30 x 5
+fn inffixed to ulong
+for i ulong 288
+put inflen i 8
+if and ge i 144 lt i 256
+put inflen i 9
+end
+if and ge i 256 lt i 280
+put inflen i 7
+end
+end
+b = infbuild 0 0 288
+for j ulong 30
+put inflen j 5
+end
+b = infbuild 1 0 30
+ret infcodes
+end
+note C inf_dynamic
+fn infdyn to ulong
+v = infbits 5
+if lt v 0
+ret 1
+end
+nlen = add ulong v 257
+v = infbits 5
+if lt v 0
+ret 1
+end
+ndist = add ulong v 1
+v = infbits 4
+if lt v 0
+ret 1
+end
+ncode = add ulong v 4
+if or gt nlen 286 gt ndist 30
+ret 8
+end
+for k ulong 19
+put inflen get infor k 0
+if lt k ncode
+v = infbits 3
+if lt v 0
+ret 1
+end
+put inflen get infor k ulong v
+end
+end
+if ne infbuild 0 0 19 0
+ret 9
+end
+tot = add nlen ndist
+i = ulong 0
+while lt i tot bound 400
+s = infdec 0
+if lt s 0
+ret get inferr 0
+end
+if lt s 16
+put inflen i ulong s
+i = add i 1
+continue
+end
+rep = ulong 0
+cnt = ulong 0
+if eq s 16
+if eq i 0
+ret 10
+end
+rep = get inflen sub i 1
+v = infbits 2
+if lt v 0
+ret 1
+end
+cnt = add 3 ulong v
+else
+if eq s 17
+v = infbits 3
+if lt v 0
+ret 1
+end
+cnt = add 3 ulong v
+else
+v = infbits 7
+if lt v 0
+ret 1
+end
+cnt = add 11 ulong v
+end
+end
+if gt add i cnt tot
+ret 11
+end
+for r ulong cnt
+put inflen add i r rep
+end
+i = add i cnt
+end
+if eq get inflen 256 0
+ret 12
+end
+e = infbuild 0 0 nlen
+if or lt e 0 and gt e 0 ne sub nlen get infcnt 0 1
+ret 13
+end
+e = infbuild 1 nlen ndist
+if or lt e 0 and gt e 0 ne sub ndist get infcnt 16 1
+ret 14
+end
+ret infcodes
+end
+note one block of C inflate_raw: 0 = more blocks follow, 1 = that was the final block,
+note else 100 + reason code
+fn infblk to ulong
+last = infbits 1
+if lt last 0
+ret 101
+end
+ty = infbits 2
+if lt ty 0
+ret 101
+end
+r = ulong 0
+if eq ty 0
+r = infstored
+else
+if eq ty 1
+r = inffixed
+else
+if eq ty 2
+r = infdyn
+else
+ret 115
+end
+end
+end
+if ne r 0
+ret add 100 r
+end
+ret ulong last
+end
+note C inflate_raw over infin[0..infil) into infout[0..infol); every block takes at least 3 bits,
+note so 999998 x 999998 blocks is far above any 8 MiB input
+fn infraw to ulong
+put infip 0 0
+put infbb 0 0
+put infbc 0 0
+put infop 0 0
+put inferr 0 0
+o = ulong 0
+done = ulong 0
+while and eq done 0 lt o 999998 bound 999999
+i = ulong 0
+while and eq done 0 lt i 999998 bound 999999
+r = infblk
+if ge r 100
+ret sub r 100
+end
+done = r
+i = add i 1
+end
+o = add o 1
+end
+if ne get infop 0 get infol 0
+ret 16
+end
+if ne get infip 0 get infil 0
+ret 17
+end
+ret 0
+end
+note C crc32_bytes over infout[0..n): init and final xor 4294967295 (0xffffffff), reflected poly
+note 3988292384 (0xedb88320) (Wolfram FromDigits); chunked so no loop passes 1000000 times
+fn infcrc n ulong to ulong
+c = ulong 4294967295
+p = ulong 0
+while lt p n bound 999999
+k = sub n p
+if gt k 524288
+k = 524288
+end
+for i ulong k
+c = xor c ulong get infout add p i
+for b ulong 8
+m = sub 0 and c 1
+c = xor shr c 1 and 3988292384 m
+end
+end
+p = add p k
+end
+ret and xor c 4294967295 4294967295
+end
+note C get32le of infin[p..p+4)
+fn infle32 p ulong to ulong
+v = or ulong get infin p shl ulong get infin add p 1 8
+v = or v shl ulong get infin add p 2 16
+ret or v shl ulong get infin add p 3 24
+end
+note C unpack_gz_body: deflate body + CRC-32 + ISIZE in infin[0..inlen), outlen plain bytes
+fn infgz inlen ulong outlen ulong to ulong
+if lt inlen 9
+ret 18
+end
+if gt outlen INFOUTMX
+ret 21
+end
+if gt inlen INFINMAX
+ret 22
+end
+put infil 0 sub inlen 8
+put infol 0 outlen
+e = infraw
+if ne e 0
+ret e
+end
+if ne infle32 sub inlen 4 outlen
+ret 19
+end
+if ne infle32 sub inlen 8 infcrc outlen
+ret 20
+end
+ret 0
+end

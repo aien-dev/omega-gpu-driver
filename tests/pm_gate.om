@@ -1,0 +1,82 @@
+note tests/pm_gate.om: the runtime-PM gate of gspboot (gsp/mmio.om). On arm64 a BAR read of a
+note device in D3 is an external abort, so gspboot must refuse with EPM (-9) before its first access.
+note usage: pm_gate SUSPENDED_FILE ACTIVE_FILE NEAR_FILE (host files holding "suspended\n", "active\n"
+note and "activa\n", same length as active but one byte off).
+note exit 0 PASS; 1..7 name the case that failed. Mode 1 is only pointed at host files here: gspbar is
+note never mapped, so a gate that let the start through would trap on its first mapget (exit != 0).
+global pa uchar 128
+global pb uchar 128
+global pc uchar 128
+fn setgin to void
+for i ulong 7
+put gin i 0
+end
+put gin 0 4
+for k ulong 4
+put gpkt k uchar 1
+end
+end
+fn usepath which int n long to void
+for i ulong ulong n
+if eq which 0
+put gpmp i get pa i
+end
+if eq which 1
+put gpmp i get pb i
+end
+if eq which 2
+put gpmp i get pc i
+end
+end
+put gpmn 0 ulong n
+end
+fn main to int
+if ne argcnt 4
+ret 9
+end
+na = argread 1 pa 0 128
+nb = argread 2 pb 0 128
+nc = argread 3 pc 0 128
+if or or le na 0 le nb 0 le nc 0
+ret 9
+end
+note case 1, planted fault: simulated device suspended; refused, zero accesses, zero violations
+put gspmode 0 0
+siminit
+put spm 0 1
+setgin
+if ne gspboot EPM
+ret 1
+end
+if or ne sg SNLOG 0 ne sg SVIOL 0
+ret 2
+end
+note case 2, positive control: the same start with the device active is not refused and touches it
+siminit
+put spm 0 0
+setgin
+if eq gspboot EPM
+ret 3
+end
+if eq sg SNLOG 0
+ret 4
+end
+note case 3: mode 1 reads runtime_status from a file that says suspended; refused before any mapget
+put gspmode 0 1
+usepath 0 na
+if ne gspboot EPM
+ret 5
+end
+note case 4: the same reader accepts exactly "active\n"
+usepath 1 nb
+if not gsppm
+ret 6
+end
+note case 5: one byte off is refused
+usepath 2 nc
+if gsppm
+ret 7
+end
+put gspmode 0 0
+ret 0
+end

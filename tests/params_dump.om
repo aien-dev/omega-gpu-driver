@@ -1,0 +1,234 @@
+note tests/params_dump.om: the differential driver for chan/params.om. It encodes the same cases as
+note tests/params_ref.c (the TEST-ONLY C referee built on the NVIDIA 580.173.02 headers) and prints
+note the same text: per case "<label> rc=<rc>[ size=<palen>]" and the record bytes in lowercase hex,
+note 32 per line; then the SM_VERSION decodes and the exported constants. The refused cases are the
+note negative controls (a value too wide for its field, chid 4096, privilege 4, aperture 3, bEnable 2,
+note engine 8, a 3711-byte reply). Build: cat chan/params.om tests/params_dump.om | omc > prog.
+note Prefix pd. Host only: no device, no file but stdout.
+text pdt "NV0000_ALLOC_PARAMETERS root|NV0000_ALLOC_PARAMETERS root hClient>u32|NV0080_ALLOC_PARAMETERS device|NV0080_ALLOC_PARAMETERS device vaMode>u32|NV2080_ALLOC_PARAMETERS subdevice|NV2080_ALLOC_PARAMETERS subdevice id>u32|NV_VASPACE_ALLOCATION_PARAMETERS vaspace|NV_VASPACE_ALLOCATION_PARAMETERS vaspace bigPageSize>u32|NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS tsg|NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS tsg engineType>u32|NV_CTXSHARE_ALLOCATION_PARAMETERS ctxshare|NV_CTXSHARE_ALLOCATION_PARAMETERS ctxshare flags>u32|NV_CHANNEL_ALLOC_PARAMS channel|NV_CHANNEL_ALLOC_PARAMS channel chid=4096|NV_CHANNEL_ALLOC_PARAMS channel gpFifoEntries>u32|NV_CHANNEL_ALLOC_PARAMS channel privilege=4|NV_CHANNEL_ALLOC_PARAMS channel chid=0|NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS schedule|NVA06C_CTRL_GPFIFO_SCHEDULE_PARAMS schedule bEnable=2|NV2080_CTRL_INTERNAL_STATIC_GR_GET_INFO_PARAMS grinfo|rpc_set_page_directory_v1E_05 setpd|rpc_set_page_directory_v1E_05 setpd aperture=3|rpc_set_page_directory_v1E_05 setpd numEntries>u32|rpc_unset_page_directory_v1E_05 unsetpd|rpc_unset_page_directory_v1E_05 unsetpd hVASpace>u32|smver eng=0|smver eng=7|smver eng=8|smver len=3711| rc=| size=|const |NV01_ROOT |NV01_DEVICE_0 |NV20_SUBDEVICE_0 |FERMI_VASPACE_A |KEPLER_CHANNEL_GROUP_A |FERMI_CONTEXT_SHARE_A |BLACKWELL_CHANNEL_GPFIFO_A |BLACKWELL_COMPUTE_B |NV_VGPU_MSG_FUNCTION_SET_PAGE_DIRECTORY |NV_VGPU_MSG_FUNCTION_GSP_RM_CONTROL |NV_VGPU_MSG_FUNCTION_UNSET_PAGE_DIRECTORY |NV_VGPU_MSG_FUNCTION_GSP_RM_ALLOC |NVA06C_CTRL_CMD_GPFIFO_SCHEDULE |NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO |NV2080_ENGINE_TYPE_GRAPHICS |NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_ASYNC "
+note test handles (decimal; the referee uses the same numbers)
+const PDHCLI ulong 3254779905
+const PDHDEV ulong 3254779906
+const PDHVAS ulong 3254779912
+note 2^32: one past the widest NvU32
+const PDBIG ulong 4294967296
+note 2^40 (VA space size), 2^33 (VA base), 0x80040000 (page directory), 2^16 (big page)
+const PDVASZ ulong 1099511627776
+const PDVABA ulong 8589934592
+const PDPDPA ulong 2147745792
+const PDBIGPG ulong 65536
+note channel input pattern: narrow k * 0x01010101 + 1, wide k * 0x0101010101010101 + 2
+const PDN1 ulong 16843009
+const PDW1 ulong 72340172838076673
+global pdob uchar 65536
+global pdpos ulong 1
+global pddig uchar 24
+fn pdflush to void
+n = get pdpos 0
+if gt n 0
+r = write 1 pdob 0 n
+if ne r long n
+exit 1
+end
+end
+put pdpos 0 0
+end
+fn pdch c uchar to void
+p = get pdpos 0
+put pdob p c
+put pdpos 0 add p 1
+if ge add p 1 65000
+pdflush
+end
+end
+fn pdfrag k ulong to void
+w = ulong 0
+for i ulong len pdt
+c = get pdt i
+if eq c 124
+w = add w 1
+else
+if eq w k
+pdch c
+end
+end
+end
+end
+fn pddec v ulong to void
+n = ulong 0
+x = v
+while true bound 24
+put pddig n uchar add rem x 10 48
+n = add n 1
+x = div x 10
+if eq x 0
+break
+end
+end
+for i ulong n
+pdch get pddig sub sub n 1 i
+end
+end
+fn pdsdec v long to void
+if lt v 0
+pdch 45
+pddec ulong neg v
+ret
+end
+pddec ulong v
+end
+fn pdhex2 b uchar to void
+for i ulong 2
+d = uchar and shr b mul sub 1 i 4 15
+if lt d 10
+pdch add d 48
+else
+pdch add d 87
+end
+end
+end
+note "<label k> rc=<rc>", then " size=<palen>" and the hex of pabuf[0..palen) when rc > 0
+fn pdshow k ulong rc long to void
+pdfrag k
+pdfrag 29
+pdsdec rc
+if le rc 0
+pdch 10
+ret
+end
+n = get palen 0
+pdfrag 30
+pddec n
+pdch 10
+for i ulong n
+pdhex2 get pabuf i
+if or eq rem i 32 31 eq add i 1 n
+pdch 10
+end
+end
+end
+fn pdsm k ulong rc long to void
+pdfrag k
+pdfrag 29
+pdsdec rc
+pdch 10
+end
+fn pdconst k ulong v ulong to void
+pdfrag 31
+pdfrag k
+pddec v
+pdch 10
+end
+fn pdwide k ulong to bool
+if or eq k 1 eq k 7
+ret true
+end
+if and ge k 16 le k 35
+ret lt rem sub k 16 4 2
+end
+ret or eq k 38 eq k 39
+end
+fn pdchin to void
+for k ulong 48
+if pdwide k
+put pain k add mul k PDW1 2
+else
+put pain k add mul k PDN1 1
+end
+end
+put pain 3 PAU32
+put pain 8 PAENGGR
+put pain 12 3
+put pain 13 2
+put pain 14 2
+put pain 15 4011
+end
+fn pdspin to void
+for k ulong 48
+put pain k 0
+end
+put pain 0 PDHCLI
+put pain 1 PDHDEV
+put pain 3 PDPDPA
+put pain 4 512
+put pain 5 2
+put pain 6 1
+put pain 7 PDHVAS
+put pain 8 4011
+end
+fn pdallocs to void
+pdshow 0 paroot PDHCLI 4242
+pdshow 1 paroot PDBIG 1
+pdshow 2 padevice 0 PDHCLI 3 2 PDVASZ
+pdshow 3 padevice 0 PDHCLI 3 PDBIG 0
+pdshow 4 pasubdev 0
+pdshow 5 pasubdev PDBIG
+pdshow 6 pavaspace 0 72 PDVASZ PDVABA PDBIGPG
+pdshow 7 pavaspace 0 72 1 0 PDBIG
+pdshow 8 patsg 0 0 PDHVAS PAENGGR
+pdshow 9 patsg 0 0 PDHVAS PDBIG
+pdshow 10 pactxsh PDHVAS PACTXAS 0
+pdshow 11 pactxsh PDHVAS PDBIG 0
+end
+fn pdchans to void
+pdchin
+pdshow 12 pachan
+put pain 15 4096
+pdshow 13 pachan
+put pain 15 4011
+put pain 2 PDBIG
+pdshow 14 pachan
+put pain 2 add mul 2 PDN1 1
+put pain 14 4
+pdshow 15 pachan
+put pain 14 2
+put pain 15 0
+pdshow 16 pachan
+end
+fn pdctrls to void
+pdshow 17 pasched 1 0 0
+pdshow 18 pasched 2 0 0
+pdshow 19 pagrinfo
+pdspin
+pdshow 20 pasetpd
+put pain 5 3
+pdshow 21 pasetpd
+put pain 5 2
+put pain 4 PDBIG
+pdshow 22 pasetpd
+pdshow 23 paunsetpd PDHCLI PDHDEV PDHVAS 0
+pdshow 24 paunsetpd PDHCLI PDHDEV PDBIG 0
+for i ulong 3712
+put pareply i uchar and add mul i 7 3 255
+end
+pdsm 25 pasmver 0 3712
+pdsm 26 pasmver 7 3712
+pdsm 27 pasmver 8 3712
+pdsm 28 pasmver 0 3711
+end
+fn pdconsts to void
+pdconst 32 PACROOT
+pdconst 33 PACDEV
+pdconst 34 PACSUB
+pdconst 35 PACVAS
+pdconst 36 PACTSG
+pdconst 37 PACCTX
+pdconst 38 PACGPF
+pdconst 39 PACCMP
+pdconst 40 PARSETPD
+pdconst 41 PARCTRL
+pdconst 42 PARUNSPD
+pdconst 43 PARALLOC
+pdconst 44 PACMSCH
+pdconst 45 PACMGRI
+pdconst 46 PAENGGR
+pdconst 47 PACTXAS
+end
+fn main to int
+pdallocs
+pdchans
+pdctrls
+pdconsts
+pdflush
+ret 0
+end

@@ -1,0 +1,301 @@
+note tests/seq_trace.om: host trace of gsp/seq.om (sqrun) on the in-.om simulator (gsp/sim.om, mode 0).
+note Reads the cases on stdin, one per line, decimal: name busy budget core corefail nwords end m w0 .. w(m-1)
+note (busy = scfg busy_reads, budget = sqbud, core = sqcore, corefail = the opcode sqcorefn fails on, words past
+note m are 0; a token starting with # skips the rest of its line). Prints, per case, what tests/seq_ref.c
+note prints for the C gsp_seq_run on the C simulator:
+note   == name rc=0|-1 why=TEXT delays=CALLS/US core=CALLS ops=OP,.. save=%#x,..(8) nlog=N violations=N
+note   then the register log, one "W|R %06x %08x" line per access (the first 1024).
+note Build: cat gsp/mmio.om gsp/sim.om gsp/seq.om tests/seq_trace.om | omc. Host only, mode 0 only.
+text zqtx "== | rc=| why=| delays=| core=| ops=| save=| nlog=| violations=|"
+global zqin uchar 262144
+global zqn ulong 1
+global zqp ulong 1
+global zqt uchar 64
+global zqtl ulong 1
+global zqnm uchar 64
+global zqnml ulong 1
+global zqob uchar 65536
+global zqo ulong 1
+global zqops ulong 16
+global zqnop ulong 1
+global zqfail ulong 1
+note the core callback gsp/seq.om calls: records the opcode, fails on zqfail
+fn sqcorefn op ulong to long
+n = get zqnop 0
+if lt n 16
+put zqops n op
+end
+put zqnop 0 add n 1
+if eq op get zqfail 0
+ret -1
+end
+ret 0
+end
+fn zqflush to void
+n = get zqo 0
+if gt n 0
+r = write 1 zqob 0 n
+if ne r long n
+exit 1
+end
+end
+put zqo 0 0
+end
+note malformed input: print what is done, then exit 2 (the C referee does the same)
+fn zqbad to void
+zqflush
+exit 2
+end
+fn zqch c uchar to void
+p = get zqo 0
+put zqob p c
+put zqo 0 add p 1
+if ge add p 1 65000
+zqflush
+end
+end
+fn zqfr k ulong to void
+w = ulong 0
+for i ulong len zqtx
+c = get zqtx i
+if eq c 124
+w = add w 1
+else
+if eq w k
+zqch c
+end
+end
+end
+end
+fn zqdec v ulong to void
+d = ulong 1
+while le d div v 10 bound 20
+d = mul d 10
+end
+while ne d 0 bound 20
+zqch uchar add rem div v d 10 48
+d = div d 10
+end
+end
+fn zqsdec v long to void
+if lt v 0
+zqch 45
+zqdec ulong sub 0 v
+ret
+end
+zqdec ulong v
+end
+fn zqdig d ulong to void
+if lt d 10
+zqch uchar add d 48
+else
+zqch uchar add d 87
+end
+end
+note %0Nx: at least w digits, zero padded
+fn zqhexw v ulong w ulong to void
+nd = ulong 0
+t = v
+while ne t 0 bound 17
+nd = add nd 1
+t = shr t 4
+end
+if lt nd w
+nd = w
+end
+for i ulong nd
+zqdig and shr v mul sub sub nd i 1 4 15
+end
+end
+note %#x: 0 prints as 0, otherwise 0x and the digits
+fn zqhex v ulong to void
+if eq v 0
+zqch 48
+ret
+end
+zqch 48
+zqch 120
+zqhexw v 1
+end
+fn zqsp c uchar to bool
+ret or eq c 32 and ge c 9 le c 13
+end
+note next whitespace-separated token into zqt[0..zqtl); its length, 0 at the end of input
+fn zqtok to ulong
+p = get zqp 0
+n = get zqn 0
+while and lt p n zqsp get zqin p bound 300000
+p = add p 1
+end
+l = ulong 0
+while and lt p n not zqsp get zqin p bound 300000
+if ge l 63
+zqbad
+end
+put zqt l get zqin p
+l = add l 1
+p = add p 1
+end
+put zqp 0 p
+put zqtl 0 l
+ret l
+end
+fn zqskipl to void
+p = get zqp 0
+n = get zqn 0
+while and lt p n ne get zqin p 10 bound 300000
+p = add p 1
+end
+put zqp 0 p
+end
+note next token as a decimal number; anything else (or more than 4294967295) stops the run with zqbad
+fn zqnum to ulong
+l = zqtok
+if eq l 0
+zqbad
+end
+v = ulong 0
+for i ulong l
+c = get zqt i
+if or lt c 48 gt c 57
+zqbad
+end
+v = add mul v 10 sub ulong c 48
+if gt v 4294967295
+zqbad
+end
+end
+ret v
+end
+fn zqcase busy ulong bud ulong con ulong fail ulong nw ulong ci ulong to void
+for i ulong 10
+put scfg i 0
+end
+put scfg 0 busy
+siminit
+put spm 0 0
+put gspmode 0 0
+for j ulong SQSAVE
+put sqsave j 0
+end
+put sqdly 0 0
+put sqdly 1 0
+put zqnop 0 0
+put sqbud 0 bud
+put sqcore 0 con
+put zqfail 0 fail
+rc = sqrun nw ci
+sqwhy rc
+zqfr 0
+for k ulong get zqnml 0
+zqch get zqnm k
+end
+zqfr 1
+note the C returns -1 for every refusal; the why text below names which one
+if lt rc 0
+zqsdec -1
+else
+zqsdec rc
+end
+zqfr 2
+if eq get sqwl 0 0
+zqch 45
+end
+for k ulong get sqwl 0
+zqch get sqwb k
+end
+zqfr 3
+zqdec get sqdly 0
+zqch 47
+zqdec and get sqdly 1 M32
+zqfr 4
+zqdec get zqnop 0
+zqfr 5
+for k ulong get zqnop 0
+if lt k 16
+zqdec get zqops k
+zqch 44
+end
+end
+zqfr 6
+for k ulong SQSAVE
+zqhex get sqsave k
+zqch 44
+end
+zqfr 7
+zqdec sg SNLOG
+zqfr 8
+zqdec sg SVIOL
+zqch 10
+for k ulong sg SNLOG
+if lt k LOGMAX
+if eq get slogw k 1
+zqch 87
+else
+zqch 82
+end
+zqch 32
+zqhexw get slogo k 6
+zqch 32
+zqhexw get slogv k 8
+zqch 10
+end
+end
+end
+fn main to int
+p = ulong 0
+while lt p 262144 bound 300000
+r = read int 0 zqin p sub 262144 p
+if lt r 0
+zqbad
+end
+if eq r 0
+break
+end
+p = add p ulong r
+end
+put zqn 0 p
+put zqp 0 0
+while true bound 100000
+l = zqtok
+if eq l 0
+break
+end
+if eq get zqt 0 35
+zqskipl
+continue
+end
+for i ulong l
+put zqnm i get zqt i
+end
+put zqnml 0 l
+busy = zqnum
+bud = zqnum
+con = zqnum
+fail = zqnum
+nw = zqnum
+ci = zqnum
+m = zqnum
+if gt m nw
+zqbad
+end
+for i ulong m
+w = zqnum
+if lt i SQMAX
+put sqbuf i uint w
+end
+end
+lim = nw
+if gt lim SQMAX
+lim = SQMAX
+end
+for i ulong lim
+if ge i m
+put sqbuf i 0
+end
+end
+zqcase busy bud con fail nw ci
+end
+zqflush
+ret 0
+end

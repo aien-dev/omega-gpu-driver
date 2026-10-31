@@ -1,0 +1,409 @@
+note tests/sysinfo_cli.om: the command line of aien-dev/aienux PR #441 native/kernel/tools/ck_gsp_sysinfo_encode.c
+note over gsp/sysinfo.om, same stdout bytes and exit codes, so tests/sysinfo_diff.sh can cmp the two.
+note   fields            the 72 fields: "%-36s off=%3u size=%u"
+note   encode IN OUT     parse IN, echo "set %-36s off=%3u size=%u value=%#llx" per accepted line, then
+note                     "REFUSED: why" (exit 2) or write the 936 bytes to OUT and "RESULT OK OUT 936 bytes"
+note   byidx OUT         .om only: set all 72 fields through siseti with distinct non-zero bytes, print the
+note                     same values as "name 0x.." text (for the C tool to encode) and write the bytes
+note   api               .om only: the API refusals (siseti/sisetn/sitext), one line each
+note Anything else: usage on stderr, exit 1 (as the C tool). Host only; never touches a device.
+note Build: cat gsp/sysinfo.om tests/sysinfo_cli.om | omc
+text zitx "REFUSED: |cannot read |cannot write |RESULT OK | 936 bytes|set | off=| size=| value=|fields|encode|byidx|api|api | rc=| why=|nit|idx|fit|ok|rep|name|unk|big|bytes|Chipset|chipset|"
+text ziut "usage: ck_gsp_sysinfo_encode encode IN.txt OUT.bin | fields | selftest\n"
+global ziob uchar 65536
+global zipos ulong 1
+global zia uchar 64
+global zip1 uchar 4096
+global zip2 uchar 4096
+global zix uchar 1
+fn ziflush to void
+n = get zipos 0
+if gt n 0
+r = write 1 ziob 0 n
+if ne r long n
+exit 1
+end
+end
+put zipos 0 0
+end
+fn zich c uchar to void
+p = get zipos 0
+put ziob p c
+put zipos 0 add p 1
+if ge add p 1 65000
+ziflush
+end
+end
+note fragment k of zitx (fragments end at | 124)
+fn zifr k ulong to void
+w = ulong 0
+for i ulong len zitx
+c = get zitx i
+if eq c 124
+w = add w 1
+else
+if eq w k
+zich c
+end
+end
+end
+end
+fn zinl to void
+zich 10
+end
+fn zidec v ulong to void
+d = ulong 1
+while le d div v 10 bound 20
+d = mul d 10
+end
+while ne d 0 bound 20
+zich uchar add rem div v d 10 48
+d = div d 10
+end
+end
+fn zisdec v long to void
+if lt v 0
+zich 45
+zidec ulong sub 0 v
+ret
+end
+zidec ulong v
+end
+note %3u
+fn zipad3 v ulong to void
+if lt v 100
+zich 32
+end
+if lt v 10
+zich 32
+end
+zidec v
+end
+note %#llx (0 prints as 0)
+fn zihex v ulong to void
+if eq v 0
+zich 48
+ret
+end
+zich 48
+zich 120
+nd = ulong 0
+t = v
+while ne t 0 bound 17
+nd = add nd 1
+t = shr t 4
+end
+for i ulong nd
+d = and shr v mul sub sub nd i 1 4 15
+if lt d 10
+zich uchar add d 48
+else
+zich uchar add d 87
+end
+end
+end
+note %-36s of sinam
+fn zinam to void
+n = get sinl 0
+for i ulong n
+zich get sinam i
+end
+if lt n 36
+for j ulong sub 36 n
+zich 32
+end
+end
+end
+fn zipath which ulong n ulong to void
+for i ulong n
+if eq which 1
+zich get zip1 i
+else
+zich get zip2 i
+end
+end
+end
+note "name off=%3u size=%u" for field k (name already in sinam)
+fn zifield k ulong to void
+zinam
+zifr 6
+zipad3 get sioff k
+zifr 7
+zidec get sisz k
+end
+note argv[1] equals fragment k of zitx
+fn zimode n long k ulong to bool
+w = ulong 0
+j = ulong 0
+for i ulong len zitx
+c = get zitx i
+if eq c 124
+w = add w 1
+else
+if eq w k
+if ge j ulong n
+ret false
+end
+if ne get zia j c
+ret false
+end
+j = add j 1
+end
+end
+end
+ret eq j ulong n
+end
+fn ziusage to int
+ziflush
+r = write 2 ziut 0 len ziut
+ret 1
+end
+fn zifields to int
+sireset
+for k ulong SINF
+sinmk k
+zifield k
+zinl
+end
+ziflush
+ret 0
+end
+fn ziecho to void
+for i ulong get sinord 0
+k = get siord i
+sinmk k
+zifr 5
+zifield k
+zifr 8
+zihex get sival k
+zinl
+end
+end
+note siwb already holds the refusal text (siwhy is called before the echo, which reuses sinam)
+fn zirefuse to int
+zifr 0
+for i ulong get siwl 0
+zich get siwb i
+end
+zinl
+ziflush
+ret 2
+end
+fn zicant k ulong which ulong n ulong to int
+zifr 0
+zifr k
+zipath which n
+zinl
+ziflush
+ret 2
+end
+note write siout to the path in zip2[0..n); false when any step fails
+fn ziput n ulong to bool
+fd = fopen zip2 0 n 524865 438
+if lt fd 0
+ret false
+end
+w = write int fd siout 0 SISIZE
+c = fclose int fd
+ret and eq w long SISIZE eq c 0
+end
+fn zislurp n ulong to long
+fd = fopen zip1 0 n 524288 0
+if lt fd 0
+ret -1
+end
+t = ulong 0
+bad = false
+while lt t SITXMAX bound 70000
+r = read int fd sitxt t sub SITXMAX t
+if lt r 0
+bad = true
+break
+end
+if eq r 0
+break
+end
+t = add t ulong r
+end
+if and eq t SITXMAX not bad
+r = read int fd zix 0 1
+if lt r 0
+bad = true
+end
+if gt r 0
+t = add t 1
+end
+end
+c = fclose int fd
+if bad
+ret -1
+end
+ret long t
+end
+fn ziencode n1 ulong n2 ulong to int
+t = zislurp n1
+if lt t 0
+r = zicant 1 1 n1
+ret r
+end
+sireset
+e = sitext ulong t
+siwhy e
+ziecho
+if ne e SIEOK
+r = zirefuse
+ret r
+end
+siencode
+if not ziput n2
+r = zicant 2 2 n2
+ret r
+end
+zifr 3
+zipath 2 n2
+zifr 4
+zinl
+ziflush
+ret 0
+end
+fn zipat k ulong to ulong
+v = ulong 0
+for b ulong get sisz k
+x = add rem add mul k 8 b 251 1
+v = or v shl x mul b 8
+end
+ret v
+end
+fn zibyidx n2 ulong to int
+sireset
+for k ulong SINF
+v = zipat k
+e = siseti k v
+if ne e SIEOK
+siwhy e
+r = zirefuse
+ret r
+end
+for i ulong get sinl 0
+zich get sinam i
+end
+zich 32
+zihex v
+zinl
+end
+siencode
+if not ziput n2
+r = zicant 2 2 n2
+ret r
+end
+ziflush
+ret 0
+end
+note one api line: "api TAG rc=N why=TEXT"
+fn ziapi tag ulong e long to void
+zifr 13
+zifr tag
+zifr 14
+zisdec e
+zifr 15
+siwhy e
+for i ulong get siwl 0
+zich get siwb i
+end
+zinl
+end
+note put fragment k of zitx into sinam/sinl (for sisetn)
+fn zisetnm k ulong to void
+w = ulong 0
+o = ulong 0
+for i ulong len zitx
+c = get zitx i
+if eq c 124
+w = add w 1
+else
+if eq w k
+put sinam o c
+o = add o 1
+end
+end
+end
+put sinl 0 o
+end
+fn ziapis to int
+e = siseti 0 1
+ziapi 16 e
+sireset
+e = siseti 72 5
+ziapi 17 e
+e = siseti 16 256
+ziapi 18 e
+e = siseti 16 255
+ziapi 19 e
+e = siseti 16 1
+ziapi 20 e
+zisetnm 25
+e = sisetn 4205
+ziapi 21 e
+zisetnm 26
+e = sisetn 4205
+ziapi 22 e
+e = sitext 65537
+ziapi 23 e
+e = sitext 65536
+ziapi 19 e
+siencode
+zifr 13
+zifr 24
+zich 32
+zidec get sinord 0
+zich 32
+zihex ulong get siout 104
+for i ulong 4
+zich 32
+zihex ulong get siout add 120 i
+end
+zinl
+ziflush
+ret 0
+end
+fn main to int
+na = argcnt
+if lt na 2
+r = ziusage
+ret r
+end
+a = argread 1 zia 0 64
+if lt a 0
+r = ziusage
+ret r
+end
+if and eq na 2 zimode a 9
+r = zifields
+ret r
+end
+if and eq na 2 zimode a 12
+r = ziapis
+ret r
+end
+if and eq na 3 zimode a 11
+n2 = argread 2 zip2 0 4096
+if lt n2 0
+r = ziusage
+ret r
+end
+r = zibyidx ulong n2
+ret r
+end
+if and eq na 4 zimode a 10
+n1 = argread 2 zip1 0 4096
+n2 = argread 3 zip2 0 4096
+if or lt n1 0 lt n2 0
+r = ziusage
+ret r
+end
+r = ziencode ulong n1 ulong n2
+ret r
+end
+r = ziusage
+ret r
+end

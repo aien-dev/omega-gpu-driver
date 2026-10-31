@@ -1,0 +1,537 @@
+note chan/sim.om: host simulator of the GB10 pieces the channel path touches, ported from aienux PR #441
+note native/kernel/gpu/gpu_sim.c and gpu_sim.h (branch pr441 @ c5bb3a4b). Library unit: no main.
+note Prefix gs / GS (never gsp). It is the mode 0 device of chan/gmmu.om mmregrd / mmregwr and of the
+note channel ops in chan/chan.om. Needs chan/gmmu.om (the window array mmwin) before it.
+note
+note It models: the VF MMU invalidate registers (a request completes after gsi[4] polls of INVALIDATE,
+note never when gsi[5] "stuck" is set), a 16-entry TLB filled by its own ver3 page walker, the fault log,
+note the doorbell (a submit token consumes that channel's ring: USERD GPPut, GP entries, push buffer
+note words, all through the GPU MMU, so a missing mapping or a write to read-only memory faults) and the
+note channel bind / disable / idle protocol. Every register access is logged (512 entries, then counted
+note as dropped). The walker, offsets and bit fields are this file's own copies, not chan/gmmu.om's, so
+note a wrong driver constant shows up as a wrong access or a fault.
+note
+note State (the fields of struct ck_gsim):
+note   gsmem 0 base, 1 size of the memory the GPU sees (inside mmwin, at bus address gsmem 0)
+note   gsi   0 pdb_lo, 1 pdb_hi, 2 pending, 3 polls left, 4 latency (3), 5 stuck, 6 done, 7 all
+note   gslogo / gslogv / gslogw, gsnlog, gsldrop: the register log
+note   gstv gstpdb gstva gstpa gstpg gstlo, gstn (next), gsthits: the TLB
+note   gsfva gsfpdb gsfkind gsfw, gsnf: faults (16 kept, all counted)
+note   per channel slot (4): gscb bound, gscid, gsctok, gscent, gscgpva, gscupa, gscipa, gscpdb,
+note   gscget gp_get, gscwr words_read, gscflt faulted, gscdis disabled
+note   gsdb doorbells, gsdbunk doorbell_unknown, gshang (set by a test: the engine never idles),
+note   gsidlep idle_polls
+note fault kinds: 1 unmapped, 2 bad PDE (a PTE above PDE2), 3 aperture, 4 write to read-only, 5 outside
+note memory
+const GSRPDB ulong 12071072
+const GSRUPR ulong 12071076
+const GSRINV ulong 12071088
+const GSDBELL ulong 12255376
+const GSTRIG ulong 2147483648
+const GSADDR ulong 4503599627366400
+const GSBIGM ulong 4503599627370240
+const GSUDPUT ulong 140
+const GSLOGMX ulong 512
+const GSNONE ulong 4
+note gshalf's "try the other half" result; fault kinds are 1..5, so 255 never collides
+const GSNEXT ulong 255
+note gspdbof's refusal: 2^64-1, never a page-aligned PDB
+const GSBADPD ulong 18446744073709551615
+global gsmem ulong 2
+global gsi ulong 8
+global gslogo uint 512
+global gslogv uint 512
+global gslogw uchar 512
+global gsnlog ulong 1
+global gsldrop ulong 1
+global gstv uchar 16
+global gstpdb ulong 16
+global gstva ulong 16
+global gstpa ulong 16
+global gstpg ulong 16
+global gstlo ulong 16
+global gstn ulong 1
+global gsthits ulong 1
+global gsfva ulong 16
+global gsfpdb ulong 16
+global gsfkind ulong 16
+global gsfw ulong 16
+global gsnf ulong 1
+global gscb uchar 4
+global gscid uint 4
+global gsctok uint 4
+global gscent uint 4
+global gscgpva ulong 4
+global gscupa ulong 4
+global gscipa ulong 4
+global gscpdb ulong 4
+global gscget uint 4
+global gscwr uint 4
+global gscflt uchar 4
+global gscdis uchar 4
+global gsdb ulong 1
+global gsdbunk ulong 1
+global gshang ulong 1
+global gsidlep ulong 1
+note walk / translate results: 0 pa, 1 page size, 2 pte low 12 bits, 3 the word read
+global gsw ulong 4
+fn gsinit base ulong size ulong to void
+put gsmem 0 base
+put gsmem 1 size
+for i ulong 8
+put gsi i 0
+end
+put gsi 4 3
+for i ulong GSLOGMX
+put gslogo i 0
+put gslogv i 0
+put gslogw i 0
+end
+put gsnlog 0 0
+put gsldrop 0 0
+for i ulong 16
+put gstv i 0
+put gstpdb i 0
+put gstva i 0
+put gstpa i 0
+put gstpg i 0
+put gstlo i 0
+put gsfva i 0
+put gsfpdb i 0
+put gsfkind i 0
+put gsfw i 0
+end
+put gstn 0 0
+put gsthits 0 0
+put gsnf 0 0
+for i ulong 4
+put gscb i 0
+put gscid i 0
+put gsctok i 0
+put gscent i 0
+put gscgpva i 0
+put gscupa i 0
+put gscipa i 0
+put gscpdb i 0
+put gscget i 0
+put gscwr i 0
+put gscflt i 0
+put gscdis i 0
+end
+put gsdb 0 0
+put gsdbunk 0 0
+put gshang 0 0
+put gsidlep 0 0
+for i ulong 4
+put gsw i 0
+end
+end
+fn gslog off ulong v ulong w uchar to void
+n = get gsnlog 0
+if lt n GSLOGMX
+put gslogo n uint off
+put gslogv n uint v
+put gslogw n w
+put gsnlog 0 add n 1
+else
+put gsldrop 0 add get gsldrop 0 1
+end
+end
+fn gsinmem pa ulong n ulong to bool
+b = get gsmem 0
+s = get gsmem 1
+if lt pa b
+ret false
+end
+o = sub pa b
+if gt o s
+ret false
+end
+ret le n sub s o
+end
+fn gsrd64 pa ulong to ulong
+o = add sub pa get gsmem 0 sub get gsmem 0 get mmwb 0
+v = ulong 0
+for i ulong 8
+v = or shl v 8 ulong get mmwin add o sub 7 i
+end
+ret v
+end
+fn gsrd32 pa ulong to ulong
+o = add sub pa get gsmem 0 sub get gsmem 0 get mmwb 0
+v = ulong 0
+for i ulong 4
+v = or shl v 8 ulong get mmwin add o sub 3 i
+end
+ret v
+end
+fn gslo lv ulong to ulong
+if eq lv 0
+ret 56
+end
+if eq lv 1
+ret 47
+end
+if eq lv 2
+ret 38
+end
+if eq lv 3
+ret 29
+end
+ret 21
+end
+fn gshi lv ulong to ulong
+if eq lv 0
+ret 56
+end
+if eq lv 1
+ret 55
+end
+if eq lv 2
+ret 46
+end
+if eq lv 3
+ret 37
+end
+ret 28
+end
+fn gschkpte pte ulong wf ulong to ulong
+ap = and shr pte 1 3
+pcf = and shr pte 3 31
+if or eq ap 0 eq ap 1
+ret 3
+end
+if and ne wf 0 ne and pcf 4 0
+ret 4
+end
+ret 0
+end
+note a valid PTE of page size psz: translation into gsw 0..2; 5 when the target is outside memory
+fn gsleaf e ulong psz ulong va ulong to ulong
+pa = add and and e GSADDR not sub psz 1 and va sub psz 1
+put gsw 0 pa
+put gsw 1 psz
+put gsw 2 and e 4095
+if gsinmem pa 4
+ret 0
+end
+ret 5
+end
+note the dual PDE0 at tbl + idx*16: small half (4 KiB pages) first, then big half (64 KiB)
+fn gsdual tbl ulong idx ulong e ulong va ulong wf ulong to ulong
+e1 = gsrd64 add add tbl mul idx 16 8
+f = gshalf and shr e1 1 3 and e1 GSADDR 12 va wf
+if ne f GSNEXT
+ret f
+end
+f = gshalf and shr e 1 3 and e GSBIGM 16 va wf
+if ne f GSNEXT
+ret f
+end
+ret 1
+end
+note one half of the dual PDE0: aperture ap, page table pt, page shift sh; GSNEXT means try the next half
+fn gshalf ap ulong pt ulong sh ulong va ulong wf ulong to ulong
+if eq ap 0
+ret GSNEXT
+end
+if eq ap 1
+ret 3
+end
+a = add pt mul and shr va sh sub shl 1 sub 21 sh 1 8
+if not gsinmem a 8
+ret 5
+end
+pte = gsrd64 a
+if eq and pte 1 0
+ret GSNEXT
+end
+f = gschkpte pte wf
+if ne f 0
+ret f
+end
+ret gsleaf pte shl 1 sh va
+end
+fn gswalk pdb ulong va ulong wf ulong to ulong
+if ne shr va 57 0
+ret 1
+end
+tbl = pdb
+for lv ulong 5
+esz = ulong 8
+if eq lv 4
+esz = 16
+end
+lo = gslo lv
+idx = and shr va lo sub shl 1 add sub gshi lv lo 1 1
+ea = add tbl mul idx esz
+if not gsinmem ea esz
+ret 5
+end
+e = gsrd64 ea
+if ne and e 1 0
+if lt lv 2
+ret 2
+end
+f = gschkpte e wf
+if ne f 0
+ret f
+end
+ret gsleaf e shl 1 lo va
+end
+if lt lv 4
+ap = and shr e 1 3
+if eq ap 0
+ret 1
+end
+if eq ap 1
+ret 3
+end
+tbl = and e GSADDR
+continue
+end
+ret gsdual tbl idx e va wf
+end
+ret 1
+end
+fn gsfault pdb ulong va ulong kind ulong wf ulong to void
+n = get gsnf 0
+if lt n 16
+put gsfva n va
+put gsfpdb n pdb
+put gsfkind n kind
+put gsfw n wf
+end
+put gsnf 0 add n 1
+end
+fn gsxlate pdb ulong va ulong wf ulong to ulong
+i = gstlbhit pdb va
+if lt i 16
+f = gschkpte get gstlo i wf
+if ne f 0
+gsfault pdb va f wf
+ret f
+end
+put gsthits 0 add get gsthits 0 1
+put gsw 0 add get gstpa i sub va get gstva i
+ret 0
+end
+f = gswalk pdb va wf
+if ne f 0
+gsfault pdb va f wf
+ret f
+end
+gstfill pdb va
+ret 0
+end
+note the first valid TLB slot covering (pdb, va), 16 when none
+fn gstlbhit pdb ulong va ulong to ulong
+for i ulong 16
+if and ne get gstv i 0 eq get gstpdb i pdb
+if lt sub va get gstva i get gstpg i
+ret i
+end
+end
+end
+ret 16
+end
+note fill TLB slot gstn % 16 from the walk result in gsw (pa, page, pte_lo)
+fn gstfill pdb ulong va ulong to void
+n = rem get gstn 0 16
+put gstn 0 add get gstn 0 1
+pg = get gsw 1
+vp = and va not sub pg 1
+put gstv n 1
+put gstpdb n pdb
+put gstpg n pg
+put gstva n vp
+put gstpa n sub get gsw 0 sub va vp
+put gstlo n get gsw 2
+end
+note a GPU read of 4 bytes at va: fault kind, the word in gsw 3
+fn gsgrd32 pdb ulong va ulong to ulong
+f = gsxlate pdb va 0
+if ne f 0
+ret f
+end
+put gsw 3 gsrd32 get gsw 0
+ret 0
+end
+fn gschan chid uint to ulong
+for i ulong 4
+if and ne get gscb i 0 eq get gscid i chid
+ret i
+end
+end
+ret GSNONE
+end
+fn gsconsume c ulong to void
+if or or ne get gscflt c 0 ne get gscdis c 0 ne get gshang 0 0
+ret
+end
+upa = add get gscupa c GSUDPUT
+if not gsinmem upa 4
+put gscflt c 1
+ret
+end
+pv = uint gsrd32 upa
+ent = get gscent c
+if ge pv ent
+put gscflt c 1
+ret
+end
+pdb = get gscpdb c
+while ne get gscget c pv bound 999999
+if not gsent c pdb add get gscgpva c mul ulong get gscget c 8
+put gscflt c 1
+ret
+end
+put gscget c rem add get gscget c 1 ent
+end
+end
+note one GP entry at eva: read both words, then every pushbuffer word; false on a fault
+fn gsent c ulong pdb ulong eva ulong to bool
+if ne gsgrd32 pdb eva 0
+ret false
+end
+lo = get gsw 3
+if ne gsgrd32 pdb add eva 4 0
+ret false
+end
+hi = get gsw 3
+ret gspb c pdb or and lo 4294967292 shl and hi 255 32 and shr hi 10 2097151
+end
+note read the n pushbuffer words at pbva (counted in gscwr); false on a fault
+fn gspb c ulong pdb ulong pbva ulong n ulong to bool
+for a ulong div add n 1023 1024
+for b ulong 1024
+w = add mul a 1024 b
+if ge w n
+break
+end
+if ne gsgrd32 pdb add pbva mul w 4 0
+ret false
+end
+put gscwr c add get gscwr c 1
+end
+end
+ret true
+end
+fn gsrd off ulong to ulong
+v = ulong 0
+if eq off GSRINV
+if and ne get gsi 2 0 eq get gsi 5 0
+if eq get gsi 3 0
+pdb = shl or and shr get gsi 0 4 268435455 shl and get gsi 1 1048575 28 12
+for i ulong 16
+if or ne get gsi 7 0 eq get gstpdb i pdb
+put gstv i 0
+end
+end
+put gsi 2 0
+put gsi 6 add get gsi 6 1
+else
+put gsi 3 sub get gsi 3 1
+end
+end
+if ne get gsi 2 0
+v = GSTRIG
+end
+end
+gslog off v 0
+ret v
+end
+fn gswr off ulong v ulong to void
+gslog off v 1
+if eq off GSRPDB
+put gsi 0 v
+ret
+end
+if eq off GSRUPR
+put gsi 1 v
+ret
+end
+if and eq off GSRINV ne and v GSTRIG 0
+put gsi 2 1
+put gsi 3 get gsi 4
+put gsi 7 0
+if ne and v 2 0
+put gsi 7 1
+end
+ret
+end
+if eq off GSDBELL
+put gsdb 0 add get gsdb 0 1
+for i ulong 4
+if and ne get gscb i 0 eq ulong get gsctok i v
+gsconsume i
+ret
+end
+end
+put gsdbunk 0 add get gsdbunk 0 1
+end
+end
+note bind: the channel's page directory comes from its instance block (RAMIN word 128/129), as the
+note hardware reads it; target must be sysmem (2 coherent, 3 non-coherent), bit 10 (VOL) clear
+fn gsbind chid uint tok uint ent uint gpva ulong upa ulong ipa ulong to long
+if ne gschan chid GSNONE
+ret -1
+end
+pdb = gspdbof ipa
+if eq pdb GSBADPD
+ret -1
+end
+for i ulong 4
+if eq get gscb i 0
+put gscid i chid
+put gsctok i tok
+put gscent i ent
+put gscgpva i gpva
+put gscupa i upa
+put gscipa i ipa
+put gscpdb i pdb
+put gscget i 0
+put gscwr i 0
+put gscflt i 0
+put gscdis i 0
+put gscb i 1
+ret 0
+end
+end
+ret -1
+end
+note the page directory from RAMIN word 128/129 of the instance block at ipa; GSBADPD when the words
+note are outside memory, the target is not sysmem or VOL is set (a real PDB has its low 12 bits clear)
+fn gspdbof ipa ulong to ulong
+a = add ipa 512
+if not gsinmem a 8
+ret GSBADPD
+end
+w = gsrd64 a
+lo = and w 4294967295
+t = and lo 3
+if or and ne t 2 ne t 3 ne and lo 1024 0
+ret GSBADPD
+end
+ret or shl shr w 32 32 and lo 4294963200
+end
+fn gsdisable chid uint to long
+c = gschan chid
+if eq c GSNONE
+ret -1
+end
+put gscdis c 1
+ret 0
+end
+fn gsidle chid uint to long
+put gsidlep 0 add get gsidlep 0 1
+c = gschan chid
+if eq c GSNONE
+ret 1
+end
+if or ne get gshang 0 0 eq get gscdis c 0
+ret 0
+end
+put gscb c 0
+ret 1
+end

@@ -1,0 +1,325 @@
+note tests/mmio_trace.om: every register access gspboot and gspnotify make against the simulated SEC2 + GSP
+note (gsp/sim.om, mode 0) in a fixed list of scenarios, one per line. Port of aien-dev/aienux PR #441
+note native/kernel/tests/gsp_boot_trace.c: same scenarios, same printf bytes (%d, %u, %#x with 0 as `0`,
+note %06x, %08x), so tests/mmio_diff.sh can cmp the two outputs. Host only; never touches a device.
+note Build: cat gsp/mmio.om gsp/sim.om tests/mmio_trace.om | omc
+const ARGSPA ulong 4886716416
+const APPVER ulong 390049
+text tnames "happy busy3 busy-forever sec2-never mask-never hwcfg2-zero2 args-never lockdown-never fmc-error riscv-dead emem-stuck bad-header odd-7 full-1024 too-long budget0 "
+text th1 "== "
+text th2 " rc="
+text th3 " stage="
+text th4 " polls="
+text th5 " dwords="
+text th6 " ememc="
+text th7 " sec2="
+text th8 " hwcfg2="
+text th9 " gsp="
+text th10 " cpuctl="
+text th11 " nlog="
+text th12 " violations="
+text th13 " phase="
+global tob uchar 262144
+global tpos ulong 1
+global tdig uchar 24
+fn tflush to void
+n = get tpos 0
+if gt n 0
+r = write 1 tob 0 n
+if ne r long n
+exit 1
+end
+end
+put tpos 0 0
+end
+fn tch c uchar to void
+p = get tpos 0
+put tob p c
+put tpos 0 add p 1
+if ge add p 1 262000
+tflush
+end
+end
+fn ttext k ulong to void
+if eq k 1
+for i ulong len th1
+tch get th1 i
+end
+end
+if eq k 2
+for i ulong len th2
+tch get th2 i
+end
+end
+if eq k 3
+for i ulong len th3
+tch get th3 i
+end
+end
+if eq k 4
+for i ulong len th4
+tch get th4 i
+end
+end
+if eq k 5
+for i ulong len th5
+tch get th5 i
+end
+end
+if eq k 6
+for i ulong len th6
+tch get th6 i
+end
+end
+if eq k 7
+for i ulong len th7
+tch get th7 i
+end
+end
+if eq k 8
+for i ulong len th8
+tch get th8 i
+end
+end
+if eq k 9
+for i ulong len th9
+tch get th9 i
+end
+end
+if eq k 10
+for i ulong len th10
+tch get th10 i
+end
+end
+if eq k 11
+for i ulong len th11
+tch get th11 i
+end
+end
+if eq k 12
+for i ulong len th12
+tch get th12 i
+end
+end
+if eq k 13
+for i ulong len th13
+tch get th13 i
+end
+end
+end
+note the k-th space-separated name of tnames
+fn tname k ulong to void
+w = ulong 0
+for i ulong len tnames
+c = get tnames i
+if eq c 32
+w = add w 1
+else
+if eq w k
+tch c
+end
+end
+end
+end
+note %u
+fn tdec v ulong to void
+n = ulong 0
+x = v
+while true bound 24
+put tdig n uchar add rem x 10 48
+n = add n 1
+x = div x 10
+if eq x 0
+break
+end
+end
+for i ulong n
+tch get tdig sub sub n 1 i
+end
+end
+note %d
+fn tsdec v long to void
+if lt v 0
+tch 45
+tdec ulong neg v
+ret
+end
+tdec ulong v
+end
+note lowercase hex, at least w digits, zero-padded (%0Nx)
+fn thex v ulong w ulong to void
+n = ulong 0
+x = v
+while true bound 24
+d = uchar rem x 16
+if lt d 10
+put tdig n add d 48
+else
+put tdig n add d 87
+end
+n = add n 1
+x = div x 16
+if eq x 0
+break
+end
+end
+while lt n w bound 24
+put tdig n 48
+n = add n 1
+end
+for i ulong n
+tch get tdig sub sub n 1 i
+end
+end
+note %#x: 0 alone, otherwise 0x and the digits
+fn talt v ulong to void
+if eq v 0
+tch 48
+ret
+end
+tch 48
+tch 120
+thex v 1
+end
+fn tbase to void
+put scfg 0 0
+put scfg 1 3
+put scfg 2 4
+put scfg 3 2
+put scfg 4 5
+put scfg 5 0
+put scfg 6 0
+put scfg 7 0
+put scfg 8 ARGSPA
+put scfg 9 0
+end
+fn tput32 o ulong v ulong to void
+put gpkt o uchar and v 255
+put gpkt add o 1 uchar and shr v 8 255
+put gpkt add o 2 uchar and shr v 16 255
+put gpkt add o 3 uchar and shr v 24 255
+end
+fn thead k ulong rc long to void
+ttext 1
+tname k
+ttext 2
+tsdec rc
+ttext 3
+tsdec get gstage 0
+ttext 4
+tdec get gout 0
+tch 44
+tdec get gout 1
+tch 44
+tdec get gout 2
+tch 44
+tdec get gout 3
+ttext 5
+tdec get gout 4
+ttext 6
+talt get gout 5
+ttext 7
+talt get gout 6
+tch 44
+talt get gout 7
+ttext 8
+talt get gout 8
+ttext 9
+talt get gout 9
+tch 44
+talt get gout 10
+ttext 10
+talt get gout 11
+ttext 11
+tdec get ss SNLOG
+ttext 12
+tdec get ss SVIOL
+ttext 13
+tdec get ss SPHASE
+tch 10
+end
+note one scenario: the caller has set scfg; k names it
+fn tscen k ulong ln ulong budget ulong hdrok bool to void
+for i ulong 1024
+put gpkt i uchar and add mul i 13 5 255
+end
+if hdrok
+tput32 0 3221225472
+tput32 4 336649854
+tput32 8 56360961
+end
+put gin 0 ln
+put gin 1 ARGSPA
+put gin 2 APPVER
+for j ulong 4
+put gin add 3 j budget
+end
+put gspmode 0 0
+siminit
+rc = gspboot
+if eq rc 0
+gspnotify
+end
+thead k rc
+n = get ss SNLOG
+for e ulong n
+if lt e LOGMAX
+if eq get slogw e 1
+tch 87
+else
+tch 82
+end
+tch 32
+thex get slogo e 6
+tch 32
+thex get slogv e 8
+tch 10
+end
+end
+end
+fn main to int
+tbase
+tscen 0 868 100 true
+tbase
+put scfg 0 3
+tscen 1 868 100 true
+tbase
+put scfg 0 NOEND
+tscen 2 868 5 true
+tbase
+put scfg 1 NOEND
+tscen 3 868 5 true
+tbase
+put scfg 2 NOEND
+tscen 4 868 5 true
+tbase
+put scfg 9 2
+tscen 5 868 100 true
+tbase
+put scfg 3 NOEND
+tscen 6 868 6 true
+tbase
+put scfg 4 NOEND
+tscen 7 868 6 true
+tbase
+put scfg 5 35
+tscen 8 868 100 true
+tbase
+put scfg 6 1
+tscen 9 868 100 true
+tbase
+put scfg 7 1
+tscen 10 868 100 true
+tbase
+tscen 11 868 3 false
+tbase
+tscen 12 7 3 true
+tbase
+tscen 13 1024 3 true
+tbase
+tscen 14 1025 3 true
+tbase
+tscen 15 868 0 true
+tflush
+ret 0
+end
